@@ -111,6 +111,7 @@ Every writer MUST append through this function via the kernel client. Contention
 - **Ingestion**: `arxiv.paper.ingested`, `gmail.message.ingested`, `gcal.event.ingested`, `imessage.message.ingested`, `twitter.tweet.ingested`
 - **User actions**: `user.intent.created | completed | abandoned | snoozed`, `user.interest.declared`, `user.annotation.added`, `user.session.started | ended`, `user.schedule.block_completed | block_dismissed | block_moved`, `user.entity.merged | split`
 - **LLM reactors**: `agent.link.asserted`, `agent.memo.created`, `agent.resource.surfaced`, `agent.question.generated`, `agent.intent.completion_detected`
+- **Embedder**: `embedding.vector.computed`
 - **Scheduler reactor**: `schedule.day.proposed`, `scheduler.config.updated`
 - **System**: `system.event.retracted`, `system.event.redacted`
 
@@ -183,6 +184,7 @@ interface Reactor {
 | `gmail`, `gcal` | cron | Google APIs (OAuth in OS keychain; `historyId`/`syncToken` in private state) | `gmail.message.ingested`, `gcal.event.ingested` |
 | `imessage` | cron | read-only queries on local `~/Library/Messages/chat.db` (ROWID cursor; needs Full Disk Access) | `imessage.message.ingested` |
 | `twitter` | manual | export-file ingestion (API unreliable) | `twitter.tweet.ingested` |
+| `embedder` | event: content-bearing ingestion patterns | embeddings API call | `embedding.vector.computed {entity_id, model, vector}` |
 | `related-papers` | event: `user.intent.created` (read_paper), + weekly cron | pgvector + web search via Claude | `agent.resource.surfaced`, `agent.link.asserted` |
 | `topic-lineage` | event: `user.intent.created` (learn_topic) | multi-turn Claude research session | `arxiv.paper.ingested` (same shape ingestion emits — deliberately), `agent.memo.created`, `agent.link.asserted` |
 | `intent-monitor` | event: `*.message.ingested`, `gcal.event.ingested` | SQL pre-filter vs open intents, then a small Claude call | `agent.intent.completion_detected` |
@@ -302,7 +304,18 @@ One typed table per major kind, sharing `entity_id` with the graph: `papers`, `p
   5. **Rescheduling is nothing special**: an unfinished block is simply a still-open intent; tomorrow's run picks it up with a staleness boost.
   6. User edits to the schedule are events (`user.schedule.block_moved` etc.), so the `schedule_blocks` fold reflects the edited plan, and edit patterns later become scoring features. Weights live in `scheduler.config.updated` events — tuning history itself replays.
 
-### 4.4 Blobs
+### 4.4 Search — FTS and vectors as folds
+
+Because folds emit plain Postgres tables, search is ordinary SQL, added without new machinery:
+
+- **Full-text, in-place**: a fold declares a generated `tsvector` column + GIN index in its own `init()` — e.g. `papers.tsv generated always as (to_tsvector('english', title || ' ' || abstract)) stored`. `init()` runs on every rebuild, so the index survives replay by construction.
+- **Full-text, cross-domain**: a dedicated `search` fold consuming many event types into one `search_index(entity_id, kind, text, tsv)` table — "search everything" is one query.
+- **Vectors**: computing an embedding is an *effect* (an API call), so it cannot live inside a pure fold — a rebuild must never re-spend money or depend on a remote service. Instead: the `embedder` reactor (event-triggered on content-bearing events) calls the embeddings API and emits `embedding.vector.computed {entity_id, model, vector}` — the vector becomes a fact, exactly as an agent memo is an LLM effect stored as an event. A trivial `embeddings` fold materializes those events into a pgvector table with an HNSW index; replay re-folds stored vectors with zero API calls. Model upgrades are explicit: re-run the embedder with a new model tag → new events → the fold keeps the generation(s) it wants.
+- **Hybrid search** is then a join: FTS rank and vector distance combined in one SQL query over two fold tables, since both are just tables.
+
+(Extracting text from PDFs for indexing follows the same reactor pattern — a `text-extractor` reactor emitting extracted text referencing a blob — since heavyweight extraction is better treated as an effect than re-done on every replay.)
+
+### 4.5 Blobs
 
 PDFs and attachments don't go in `events.payload`. A content-addressed **blob store** (`~/Library/Application Support/newcomputer/blobs/<sha256>`; optional object-storage mirror later); events store `{blob: {sha256, bytes, mime}}`. Blobs are immutable, so the replay invariant holds.
 
@@ -395,7 +408,7 @@ The kernel directory should stay small enough to read in one sitting; all growth
 ### 8.1 H-Net paper flow
 
 1. User pastes the arXiv URL. A `reactor:arxiv` job fetches metadata + PDF → blob store; appends `arxiv.paper.ingested` (idempotency key `arxiv:2401.xxxxx:v1`).
-2. Folds fold: a `papers` row; the graph fold mints `uuidv5('paper:arxiv:2401.xxxxx')`, thin author `person` entities, `authored` links; the `embeddings` fold picks up the abstract.
+2. Folds fold: a `papers` row; the graph fold mints `uuidv5('paper:arxiv:2401.xxxxx')`, thin author `person` entities, `authored` links. The `embedder` reactor embeds the abstract and emits `embedding.vector.computed`; the `embeddings` fold materializes it into the pgvector table.
 3. User clicks "want to read in depth" → `user.intent.created {read_paper, depth:'deep'}` → `intents` fold.
 4. That event triggers `related-papers`: vector + web search; emits `agent.resource.surfaced` ×5 and `agent.link.asserted {related_to, confidence, evidence}`, each `caused_by_uid` = the intent event. They appear in the paper's related rail and Inbox; one click on a candidate creates another read intent. The loop closes.
 5. 4am: `daily-scheduler` scores candidates; no session history yet → prior estimate (deep read, 28 pages → 90 min); emits `schedule.day.proposed` with a "Read H-Net in depth" block.
@@ -431,7 +444,7 @@ Each milestone is a vertical slice shipping a usable loop; the M0 kernel carries
 
 - **M0 — The kernel.** Monorepo; `events` + `append_events`; schema registry with ~5 event types; fold runner + checkpoints + rebuild-on-version-bump; jobs dispatcher + reactor harness; worker daemon (launchd); Electron shell whose only screen is the **Event Inspector**. *Exit test: bump a fold version and watch it rebuild.*
 - **M1 — Paper curriculum, naive.** `arxiv` reactor + blob store; `papers` + graph folds; Library; pdf.js renderer with session events; want-to-read button; `daily-scheduler` v1 (priority + staleness, fixed estimates); Today screen. *The H-Net loop works end-to-end, minus LLM reactors.*
-- **M2 — First LLM reactor + embeddings.** Claude harness in the reactor runtime, `runs`/`cost_ledger`; `embeddings` fold (pgvector); `related-papers`; related rail + Inbox.
+- **M2 — First LLM reactor + embeddings.** Claude harness in the reactor runtime, `runs`/`cost_ledger`; `embedder` reactor + `embeddings` fold (pgvector); `related-papers`; related rail + Inbox.
 - **M3 — Email, calendar, identity.** `gmail`/`gcal` reactors (OAuth in keychain); `emails`/`calendar_events` folds; identifiers + canonical-merge + `identity-resolver` + merge/split UI; People pages with cross-domain joins. *Where "one database" starts visibly paying off.*
 - **M4 — Chat, amorphous intents, iMessage.** Chat pane + `chat-extractor` (confirm-card pattern); `imessage` reactor (Full Disk Access flow); `intent-monitor`; the coffee-with-Panda flow works.
 - **M5 — Topic learning.** `learn_topic` intents; `topic-lineage`; memo entity + markdown renderer; Topic pages; "understand X" blocks.
