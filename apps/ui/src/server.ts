@@ -46,8 +46,10 @@ function dateRange(days: number): { from: string; to: string } {
   return { from: new Date(to.getTime() - days * 86_400_000).toISOString(), to: to.toISOString() };
 }
 
+// Read endpoints are pure reads: the worker daemon keeps folds caught up
+// every 2s, and folding on the request path both delays responses and
+// contends on the per-fold advisory locks under polling load.
 app.get("/api/state", async (c) => {
-  await catchUpFolds(sql, coreRegistry, folds);
   const filters = await sql`
     select name, model, prompt, prompt_hash from filters order by name`;
   const counts = await sql`
@@ -87,6 +89,7 @@ app.get("/api/state", async (c) => {
 
 app.get("/api/results/:name", async (c) => {
   const name = c.req.param("name");
+  // Pure read; see the note on /api/state.
   const filter = (await sql`select prompt_hash from filters where name = ${name}`)[0];
   if (filter === undefined) {
     return c.json({ error: `no filter named ${name}` }, 404);
@@ -142,7 +145,6 @@ app.get("/api/feed", async (c) => {
   if (!Number.isFinite(days) || days <= 0 || days > 60) {
     return c.json({ error: `invalid days: ${c.req.query("days")}` }, 400);
   }
-  await catchUpFolds(sql, coreRegistry, folds);
   const from = new Date(Date.now() - days * 86_400_000).toISOString();
   // Recency = paper is new on arXiv OR new to us (lab backfills ingest older
   // papers; they should still surface the day they arrive).

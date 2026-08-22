@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   previewHash,
@@ -187,13 +187,22 @@ export function App() {
   const [categories, setCategories] = useState("cs.LG");
   const [error, setError] = useState<string | null>(null);
 
+  // Polls skip when a request is already in flight — otherwise a slow server
+  // accumulates a backlog of concurrent requests and everything snowballs.
+  const stateInFlight = useRef(false);
   const refresh = useCallback(async () => {
+    if (stateInFlight.current) {
+      return;
+    }
+    stateInFlight.current = true;
     try {
       const s = await api.state();
       setState(s);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      stateInFlight.current = false;
     }
   }, []);
 
@@ -222,12 +231,19 @@ export function App() {
       return;
     }
     let cancelled = false;
+    let inFlight = false;
     const load = async () => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
       try {
         const f = await api.feed(3);
         if (!cancelled) setFeed(f);
       } catch {
         if (!cancelled) setFeed(null);
+      } finally {
+        inFlight = false;
       }
     };
     void load();
@@ -263,12 +279,19 @@ export function App() {
       return;
     }
     let cancelled = false;
+    let inFlight = false;
     const load = async () => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
       try {
         const r = await api.results(selected);
         if (!cancelled) setResults(r);
       } catch {
         if (!cancelled) setResults(null);
+      } finally {
+        inFlight = false;
       }
     };
     void load();
