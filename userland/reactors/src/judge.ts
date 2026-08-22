@@ -60,7 +60,11 @@ function papersBlock(papers: readonly PaperForJudging[]): string {
 
 let client: Anthropic | undefined;
 
-export const anthropicJudge: JudgeFn = async (model, filterPrompt, papers) => {
+async function judgeOnce(
+  model: string,
+  filterPrompt: string,
+  papers: readonly PaperForJudging[],
+): Promise<{ byId: Map<string, Judgment>; tokensIn: number; tokensOut: number }> {
   client ??= new Anthropic();
   const response = await client.messages.parse({
     model,
@@ -80,24 +84,43 @@ export const anthropicJudge: JudgeFn = async (model, filterPrompt, papers) => {
       `judge response did not parse (stop_reason ${response.stop_reason})`,
     );
   }
-  const byId = new Map(parsed.judgments.map((j) => [j.arxiv_id, j]));
+  const byId = new Map(
+    parsed.judgments.map((j): [string, Judgment] => [
+      j.arxiv_id,
+      { arxivId: j.arxiv_id, verdict: j.verdict, confidence: j.confidence, reason: j.reason },
+    ]),
+  );
+  return {
+    byId,
+    tokensIn: response.usage.input_tokens,
+    tokensOut: response.usage.output_tokens,
+  };
+}
+
+export const anthropicJudge: JudgeFn = async (model, filterPrompt, papers) => {
+  const first = await judgeOnce(model, filterPrompt, papers);
+  let tokensIn = first.tokensIn;
+  let tokensOut = first.tokensOut;
+  const byId = first.byId;
+
+  // The model occasionally omits a paper from a batch. Re-ask once for just
+  // the missing ones rather than failing the whole (already paid-for) run.
+  const missing = papers.filter((p) => !byId.has(p.arxivId));
+  if (missing.length > 0) {
+    const retry = await judgeOnce(model, filterPrompt, missing);
+    tokensIn += retry.tokensIn;
+    tokensOut += retry.tokensOut;
+    for (const [id, judgment] of retry.byId) {
+      byId.set(id, judgment);
+    }
+  }
+
   const judgments = papers.map((paper): Judgment => {
     const j = byId.get(paper.arxivId);
     if (j === undefined) {
-      throw new Error(`judge returned no judgment for ${paper.arxivId}`);
+      throw new Error(`judge returned no judgment for ${paper.arxivId} even after retry`);
     }
-    return {
-      arxivId: j.arxiv_id,
-      verdict: j.verdict,
-      confidence: j.confidence,
-      reason: j.reason,
-    };
+    return j;
   });
-  return {
-    judgments,
-    usage: {
-      tokensIn: response.usage.input_tokens,
-      tokensOut: response.usage.output_tokens,
-    },
-  };
+  return { judgments, usage: { tokensIn, tokensOut } };
 };
