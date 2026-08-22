@@ -53,3 +53,30 @@ judges nothing (no LLM spend). Editing the prompt gives a new hash, so
 `run-filter --days N` re-judges that range under the new prompt while old
 verdicts stay attributed to the prompt version that produced them — all of it
 just events in the log.
+
+## UI
+
+```sh
+pnpm ui   # builds and serves http://127.0.0.1:4680
+```
+
+A local web console for the filter desk: edit prompts (with a live preview of
+the hash the edit will mint), trigger ingests and judging runs, and read
+verdicts. The UI appends events and enqueues jobs; the worker daemon picks
+jobs up through the database — there is no direct connection between them.
+The UI also catches up folds itself, which is safe alongside the daemon
+because the fold runner takes a per-fold advisory lock.
+
+## Worker on Fly
+
+The worker daemon runs as the Fly app `personalbase-worker` (one always-on
+`shared-cpu-1x` machine in `sjc`, no public ports; `Dockerfile` + `fly.toml`).
+Secrets: `DATABASE_URL`, `ANTHROPIC_API_KEY`.
+
+```sh
+fly deploy --app personalbase-worker --ha=false   # redeploy after changes
+fly logs --app personalbase-worker                # watch it work
+```
+
+A locally-run daemon (`pnpm nc daemon`) is safe to run alongside it: the job
+queue claims with SKIP LOCKED and fold-running is advisory-locked.

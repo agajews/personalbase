@@ -242,6 +242,14 @@ async function cmdTail(args: string[]): Promise<void> {
 
 async function cmdDaemon(): Promise<void> {
   await withDb(async (sql) => {
+    // A previous daemon killed mid-job (e.g. a deploy) leaves jobs 'running'
+    // forever. Requeue them: reactor emission is idempotent, so a partial
+    // earlier run cannot double-post.
+    const requeued = await sql`
+      update jobs set status = 'pending' where status = 'running' returning job_id`;
+    if (requeued.length > 0) {
+      console.log(`requeued ${requeued.length} stale running job(s)`);
+    }
     console.log("worker daemon running (folds, event reactors, jobs); ctrl-c to stop");
     while (true) {
       await catchUpFolds(sql, coreRegistry, folds);

@@ -1,5 +1,5 @@
 import { upcastToLatest, type SchemaRegistry } from "@nc/schema";
-import type { Sql } from "./db.js";
+import type { Sql, TransactionSql } from "./db.js";
 
 /** An exact event type, or a prefix pattern ending in ".*" (e.g. "arxiv.paper.*"). */
 export type EventTypePattern = string;
@@ -33,7 +33,7 @@ export function patternToLike(pattern: EventTypePattern): string {
  * schema version. This is the one consumption path for folds and reactors.
  */
 export async function readEvents(
-  sql: Sql,
+  sql: Sql | TransactionSql,
   registry: SchemaRegistry,
   opts: {
     readonly afterSeq: bigint;

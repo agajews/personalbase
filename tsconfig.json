@@ -3,8 +3,8 @@
   "include": [
     "kernel/*/src/**/*.ts",
     "userland/*/src/**/*.ts",
-    "apps/*/src/**/*.ts",
+    "apps/worker/src/**/*.ts",
     "**/test/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "apps/ui"]
 }

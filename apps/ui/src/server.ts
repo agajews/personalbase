@@ -1,0 +1,173 @@
+import { existsSync } from "node:fs";
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { Hono } from "hono";
+import { z } from "zod";
+import {
+  appendEvents,
+  connect,
+  kernelMigrationsDir,
+  migrate,
+  type Sql,
+} from "@nc/log";
+import { coreRegistry } from "@nc/schema";
+import { catchUpFolds, enqueueJob } from "@nc/process";
+import { filterResultsFold, filtersFold, papersFold } from "@nc/folds";
+
+// The UI reads folds and appends events / enqueues jobs. It never runs
+// reactors — the worker daemon (local or Fly) picks jobs up through the
+// database. Fold catch-up here is safe alongside the daemon because the fold
+// runner takes a per-fold advisory lock.
+const folds = [papersFold, filtersFold, filterResultsFold];
+
+if (existsSync(".env")) {
+  process.loadEnvFile(".env");
+}
+const databaseUrl = process.env["DATABASE_URL"];
+if (databaseUrl === undefined || databaseUrl === "") {
+  console.error("DATABASE_URL is not set");
+  process.exit(1);
+}
+const sql: Sql = connect(databaseUrl);
+await migrate(sql, kernelMigrationsDir);
+
+const app = new Hono();
+
+function dateRange(days: number): { from: string; to: string } {
+  const to = new Date();
+  return { from: new Date(to.getTime() - days * 86_400_000).toISOString(), to: to.toISOString() };
+}
+
+app.get("/api/state", async (c) => {
+  await catchUpFolds(sql, coreRegistry, folds);
+  const filters = await sql`
+    select name, model, prompt, prompt_hash from filters order by name`;
+  const counts = await sql`
+    select filter_name, prompt_hash, verdict, count(*)::int as n
+    from filter_results group by filter_name, prompt_hash, verdict`;
+  const papers = await sql`
+    select count(*)::int as total, max(updated_at) as latest from papers`;
+  const jobs = await sql`
+    select job_id, process, payload, status, attempts, run_after
+    from jobs where status in ('pending', 'running')
+    order by created_at`;
+  const runs = await sql`
+    select process, status, started_at, finished_at, emitted_count,
+           tokens_in, tokens_out, error
+    from runs order by started_at desc limit 8`;
+  const tail = await sql`
+    select seq, type, source, occurred_at from events order by seq desc limit 10`;
+  return c.json({
+    filters: filters.map((f) => ({
+      name: f["name"],
+      model: f["model"],
+      prompt: f["prompt"],
+      promptHash: f["prompt_hash"],
+      matches: counts.find(
+        (x) => x["filter_name"] === f["name"] && x["prompt_hash"] === f["prompt_hash"] && x["verdict"] === "match",
+      )?.["n"] ?? 0,
+      rejects: counts.find(
+        (x) => x["filter_name"] === f["name"] && x["prompt_hash"] === f["prompt_hash"] && x["verdict"] === "reject",
+      )?.["n"] ?? 0,
+    })),
+    papers: { total: papers[0]!["total"], latest: papers[0]!["latest"] },
+    jobs,
+    runs,
+    tail: tail.map((e) => ({ ...e, seq: String(e["seq"]) })).reverse(),
+  });
+});
+
+app.get("/api/results/:name", async (c) => {
+  const name = c.req.param("name");
+  const filter = (await sql`select prompt_hash from filters where name = ${name}`)[0];
+  if (filter === undefined) {
+    return c.json({ error: `no filter named ${name}` }, 404);
+  }
+  const rows = await sql`
+    select r.arxiv_id, r.verdict, r.confidence, r.reason,
+           p.title, p.abstract, p.categories, p.updated_at
+    from filter_results r
+    join papers p on p.arxiv_id = r.arxiv_id
+    where r.filter_name = ${name} and r.prompt_hash = ${filter["prompt_hash"]}
+    order by r.confidence desc`;
+  const shape = (r: (typeof rows)[number]) => ({
+    arxivId: r["arxiv_id"],
+    title: r["title"],
+    abstract: r["abstract"],
+    categories: r["categories"],
+    confidence: Number(r["confidence"]),
+    reason: r["reason"],
+    updatedAt: r["updated_at"],
+  });
+  return c.json({
+    promptHash: filter["prompt_hash"],
+    matches: rows.filter((r) => r["verdict"] === "match").map(shape),
+    rejects: rows.filter((r) => r["verdict"] === "reject").map(shape),
+  });
+});
+
+const filterBody = z.object({
+  name: z.string().min(1).max(64),
+  prompt: z.string().min(1),
+  model: z.string().min(1),
+});
+
+app.post("/api/filters", async (c) => {
+  const body = filterBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.filter.defined",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  return c.json({ ok: true });
+});
+
+const runBody = z.object({ name: z.string().min(1), days: z.number().min(0.1).max(60) });
+
+app.post("/api/jobs/filter", async (c) => {
+  const body = runBody.parse(await c.req.json());
+  const exists = await sql`select 1 from filters where name = ${body.name}`;
+  if (exists.length === 0) {
+    return c.json({ error: `no filter named ${body.name}` }, 404);
+  }
+  const jobId = await enqueueJob(sql, "reactor:paper-filter", {
+    ...dateRange(body.days),
+    filter: body.name,
+  });
+  return c.json({ jobId });
+});
+
+const ingestBody = z.object({
+  days: z.number().min(0.1).max(60),
+  categories: z.array(z.string().min(1)).optional(),
+});
+
+app.post("/api/jobs/ingest", async (c) => {
+  const body = ingestBody.parse(await c.req.json());
+  const jobId = await enqueueJob(sql, "reactor:arxiv", {
+    ...dateRange(body.days),
+    ...(body.categories === undefined || body.categories.length === 0
+      ? {}
+      : { categories: body.categories }),
+  });
+  return c.json({ jobId });
+});
+
+app.onError((error, c) => {
+  console.error(error);
+  return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+});
+
+// Static frontend (built by `vite build`); paths are cwd-relative, so run
+// from the repo root (`pnpm ui`).
+app.use("*", serveStatic({ root: "./apps/ui/dist" }));
+app.get("*", serveStatic({ path: "./apps/ui/dist/index.html" }));
+
+serve({ fetch: app.fetch, port: 4680, hostname: "127.0.0.1" }, (info) => {
+  console.log(`ui at http://127.0.0.1:${info.port}`);
+});

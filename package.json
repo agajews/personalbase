@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "nc": "tsx apps/worker/src/cli.ts",
+    "ui": "pnpm --filter @nc/ui build && tsx apps/ui/src/server.ts",
     "test": "vitest run",
-    "typecheck": "tsc --build"
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/ui/tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

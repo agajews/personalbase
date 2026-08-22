@@ -1,0 +1,13 @@
+# Worker daemon on Fly: no public services — it coordinates with the UI and
+# CLI purely through the database. One always-on machine.
+app = "personalbase-worker"
+primary_region = "sjc"
+
+[build]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[restart]]
+  policy = "always"
