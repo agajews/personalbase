@@ -69,6 +69,23 @@ export type AgentPaperAffiliationsExtracted = z.infer<
   typeof agentPaperAffiliationsExtractedV1
 >;
 
+export const paperpileItemImportedV1 = z.object({
+  paperpileId: z.string().min(1),
+  pubtype: z.string(),          // PP_PREPRINT | PP_ARTICLE | PP_WEBSITE | ...
+  title: z.string().min(1),
+  authors: z.array(z.string()),
+  year: z.number().int().optional(),
+  abstract: z.string().optional(),
+  arxivId: z.string().optional(),
+  doi: z.string().optional(),
+  url: z.string().optional(),
+  journal: z.string().optional(),
+  folders: z.array(z.string()).optional(),
+  /** When the item was added to the library (Paperpile's created time). */
+  addedAt: z.iso.datetime({ offset: true }),
+});
+export type PaperpileItemImported = z.infer<typeof paperpileItemImportedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -78,4 +95,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
     type: "agent.paper.affiliations_extracted",
     versions: [{ schema: agentPaperAffiliationsExtractedV1 }],
   },
+  { type: "paperpile.item.imported", versions: [{ schema: paperpileItemImportedV1 }] },
 ]);

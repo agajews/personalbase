@@ -12,13 +12,21 @@ import {
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
 import { catchUpFolds, enqueueJob } from "@nc/process";
-import { entityId, filterResultsFold, filtersFold, graphFold, papersFold, paperRef } from "@nc/folds";
+import {
+  entityId,
+  filterResultsFold,
+  filtersFold,
+  graphFold,
+  libraryFold,
+  papersFold,
+  paperRef,
+} from "@nc/folds";
 
 // The UI reads folds and appends events / enqueues jobs. It never runs
 // reactors — the worker daemon (local or Fly) picks jobs up through the
 // database. Fold catch-up here is safe alongside the daemon because the fold
 // runner takes a per-fold advisory lock.
-const folds = [papersFold, filtersFold, filterResultsFold, graphFold];
+const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold];
 
 if (existsSync(".env")) {
   process.loadEnvFile(".env");

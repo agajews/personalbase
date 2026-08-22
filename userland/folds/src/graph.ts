@@ -2,6 +2,8 @@ import {
   agentLinkAssertedV1,
   agentPaperAffiliationsExtractedV1,
   arxivPaperIngestedV1,
+  paperpileItemImportedV1,
+  type PaperpileItemImported,
 } from "@nc/schema";
 import { jsonb } from "@nc/log";
 import type { TransactionSql } from "@nc/log";
@@ -17,11 +19,39 @@ function normalizeName(name: string): string {
 }
 
 export function personRef(name: string): string {
-  return `arxiv_author:${normalizeName(name).toLowerCase()}`;
+  return `author:${normalizeName(name).toLowerCase()}`;
 }
 
 export function paperRef(arxivId: string): string {
   return `arxiv:${arxivId}`;
+}
+
+const scholarlyPubtypes = new Set([
+  "PP_PREPRINT",
+  "PP_ARTICLE",
+  "PP_CONFERENCE_PAPER",
+  "PP_REPORT",
+  "PP_THESIS",
+]);
+
+/**
+ * Identity precedence for library items: arXiv id (converging with arXiv
+ * ingestion), then DOI, then URL, then the Paperpile id as a last resort.
+ */
+export function libraryItemEntity(
+  item: Pick<PaperpileItemImported, "pubtype" | "arxivId" | "doi" | "url" | "paperpileId">,
+): { kind: string; ref: string } {
+  const kind = scholarlyPubtypes.has(item.pubtype) ? "paper" : "resource";
+  if (item.arxivId !== undefined) {
+    return { kind: "paper", ref: paperRef(item.arxivId) };
+  }
+  if (item.doi !== undefined) {
+    return { kind, ref: `doi:${item.doi.toLowerCase()}` };
+  }
+  if (item.url !== undefined) {
+    return { kind, ref: `url:${item.url}` };
+  }
+  return { kind, ref: `paperpile:${item.paperpileId}` };
 }
 
 async function ensureEntity(
@@ -70,11 +100,12 @@ async function ensureLink(
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 1,
+  version: 2,
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",
     "agent.paper.affiliations_extracted",
+    "paperpile.item.imported",
   ],
   tables: ["entities", "identifiers", "links"],
   async init(tx) {
@@ -154,6 +185,42 @@ export const graphFold: Fold = {
         evidence: l.evidence,
         seq: event.seq,
       });
+      return;
+    }
+    if (event.type === "paperpile.item.imported") {
+      const item = paperpileItemImportedV1.parse(event.payload);
+      const target = libraryItemEntity(item);
+      const entity = await ensureEntity(tx, target.kind, target.ref, item.title, event.seq);
+      if (item.arxivId !== undefined) {
+        await tx`
+          insert into identifiers (scheme, value, entity_id, asserted_by)
+          values ('arxiv_id', ${item.arxivId}, ${entity}, ${event.source})
+          on conflict (scheme, value) do nothing`;
+      }
+      if (item.doi !== undefined) {
+        await tx`
+          insert into identifiers (scheme, value, entity_id, asserted_by)
+          values ('doi', ${item.doi.toLowerCase()}, ${entity}, ${event.source})
+          on conflict (scheme, value) do nothing`;
+      }
+      for (const name of item.authors) {
+        const person = await ensureEntity(
+          tx,
+          "person",
+          personRef(name),
+          normalizeName(name),
+          event.seq,
+        );
+        await ensureLink(tx, {
+          fromId: person,
+          toId: entity,
+          linkType: "authored",
+          assertedBy: event.source,
+          confidence: 1,
+          evidence: undefined,
+          seq: event.seq,
+        });
+      }
       return;
     }
     if (event.type === "agent.paper.affiliations_extracted") {

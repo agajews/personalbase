@@ -14,9 +14,11 @@ export {
   agentPaperFilteredV1,
   agentLinkAssertedV1,
   agentPaperAffiliationsExtractedV1,
+  paperpileItemImportedV1,
   type ArxivPaperIngested,
   type UserFilterDefined,
   type AgentPaperFiltered,
   type AgentLinkAsserted,
   type AgentPaperAffiliationsExtracted,
+  type PaperpileItemImported,
 } from "./events.js";

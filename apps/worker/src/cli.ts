@@ -27,6 +27,7 @@ const usage = `usage: pnpm nc <command>
                                               ingest papers submitted in a range
   ingest-labs [--lab openai|deepmind|anthropic|meta]
                                               ingest lab publication pages
+  import-paperpile <path>                     import a Paperpile library JSON export
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
@@ -167,6 +168,29 @@ async function cmdIngestLabs(args: string[]): Promise<void> {
   });
 }
 
+async function cmdImportPaperpile(args: string[]): Promise<void> {
+  const path = args[0];
+  if (path === undefined) {
+    fail("usage: import-paperpile <path>");
+  }
+  await withDb(async (sql) => {
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "paperpile-import")!,
+      { kind: "job", payload: { path } },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    const rows = await sql`
+      select count(*)::int as items, count(distinct entity_id)::int as entities
+      from library_items`;
+    console.log(
+      `imported ${result.emitted} items (${result.appended} new events); ` +
+        `library now has ${rows[0]!["items"]} items across ${rows[0]!["entities"]} entities`,
+    );
+  });
+}
+
 async function cmdRunFilter(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -293,6 +317,9 @@ switch (command) {
     break;
   case "ingest-labs":
     await cmdIngestLabs(rest);
+    break;
+  case "import-paperpile":
+    await cmdImportPaperpile(rest);
     break;
   case "run-filter":
     await cmdRunFilter(rest);

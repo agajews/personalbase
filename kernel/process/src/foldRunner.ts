@@ -38,6 +38,11 @@ async function stepFold(
     }
     const rows = await tx`select version, last_seq from checkpoints where process = ${key}`;
     let cursor: bigint;
+    if (rows[0] !== undefined && rows[0]["version"] > fold.version) {
+      // A newer code version owns this fold (e.g. deployed worker vs local
+      // CLI mid-upgrade). Back off instead of rebuilding backwards.
+      return null;
+    }
     if (rows[0] !== undefined && rows[0]["version"] === fold.version) {
       cursor = BigInt(rows[0]["last_seq"]);
     } else {

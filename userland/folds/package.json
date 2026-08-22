@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@nc/log": "workspace:*",
-    "@nc/process": "workspace:*"
+    "@nc/process": "workspace:*",
+    "@nc/reactors": "workspace:*"
   }
 }

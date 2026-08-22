@@ -142,6 +142,9 @@ importers:
       '@nc/process':
         specifier: workspace:*
         version: link:../../kernel/process
+      '@nc/reactors':
+        specifier: workspace:*
+        version: link:../reactors
 
   userland/reactors:
     dependencies:

@@ -39,3 +39,8 @@ export {
   type Judgment,
   type PaperForJudging,
 } from "./judge.js";
+export {
+  paperpileImportReactor,
+  paperpileItemToEvent,
+  paperpileJobPayload,
+} from "./paperpileImport.js";
