@@ -1,4 +1,30 @@
-export { arxivReactor, arxivJobPayload, entryToEvent, type ArxivJobPayload } from "./arxiv.js";
+export {
+  arxivReactor,
+  arxivJobPayload,
+  entryToEvent,
+  fetchArxivByIds,
+  resolveArxivByTitle,
+  type ArxivJobPayload,
+} from "./arxiv.js";
+export {
+  affiliationsReactor,
+  makeAffiliationsReactor,
+  fetchPaperText,
+  anthropicExtractor,
+  type AffiliationExtractor,
+  type ExtractionInput,
+  type ExtractionResult,
+} from "./affiliations.js";
+export {
+  labPublicationsReactor,
+  makeLabPublicationsReactor,
+  anthropicLabLister,
+  labs,
+  labJobPayload,
+  type LabConfig,
+  type LabLister,
+  type LabListing,
+} from "./labPublications.js";
 export { parseArxivAtom, type ArxivEntry } from "./arxivAtom.js";
 export {
   makePaperFilterReactor,

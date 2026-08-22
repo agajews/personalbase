@@ -418,6 +418,24 @@ textarea {
   color: var(--ink);
 }
 
+.org-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1.5px 8px;
+  border-radius: 999px;
+  background: var(--spruce);
+  color: #eef4ee;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.verdict-authors {
+  color: var(--muted);
+  margin: 8px 0 0 54px;
+  font-size: 12.5px;
+  font-style: italic;
+}
+
 .verdict-reason {
   color: var(--muted);
   margin: 8px 0 0 54px;

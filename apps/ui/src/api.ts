@@ -47,6 +47,8 @@ export interface Verdict {
   title: string;
   abstract: string;
   categories: string[];
+  authors: string[];
+  orgs: string[];
   confidence: number;
   reason: string;
   updatedAt: string;
@@ -88,6 +90,12 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ days, categories }),
+    }),
+  ingestLabs: (): Promise<{ jobId: string }> =>
+    request("/api/jobs/labs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
     }),
 };
 

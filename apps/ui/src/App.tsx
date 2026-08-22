@@ -50,6 +50,11 @@ function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; ope
           />
         </span>
         <span className="verdict-title">{verdict.title}</span>
+        {verdict.orgs.map((org) => (
+          <span key={org} className="org-chip">
+            {org}
+          </span>
+        ))}
         <a
           className="arxiv-id"
           href={`https://arxiv.org/abs/${verdict.arxivId}`}
@@ -60,6 +65,9 @@ function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; ope
           {verdict.arxivId}
         </a>
       </summary>
+      {verdict.authors.length > 0 && (
+        <p className="verdict-authors">{verdict.authors.join(", ")}</p>
+      )}
       <p className="verdict-reason">{verdict.reason}</p>
       <p className="verdict-abstract">{verdict.abstract}</p>
     </details>
@@ -253,6 +261,12 @@ export function App() {
               }
             >
               Ingest papers
+            </button>
+            <button
+              title="Read the publication pages of OpenAI, DeepMind, Anthropic, and Meta"
+              onClick={() => void act(() => api.ingestLabs())}
+            >
+              Ingest lab publications
             </button>
           </div>
         </aside>

@@ -12,13 +12,13 @@ import {
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
 import { catchUpFolds, enqueueJob } from "@nc/process";
-import { filterResultsFold, filtersFold, papersFold } from "@nc/folds";
+import { entityId, filterResultsFold, filtersFold, graphFold, papersFold, paperRef } from "@nc/folds";
 
 // The UI reads folds and appends events / enqueues jobs. It never runs
 // reactors — the worker daemon (local or Fly) picks jobs up through the
 // database. Fold catch-up here is safe alongside the daemon because the fold
 // runner takes a per-fold advisory lock.
-const folds = [papersFold, filtersFold, filterResultsFold];
+const folds = [papersFold, filtersFold, filterResultsFold, graphFold];
 
 if (existsSync(".env")) {
   process.loadEnvFile(".env");
@@ -85,16 +85,37 @@ app.get("/api/results/:name", async (c) => {
   }
   const rows = await sql`
     select r.arxiv_id, r.verdict, r.confidence, r.reason,
-           p.title, p.abstract, p.categories, p.updated_at
+           p.title, p.abstract, p.categories, p.authors, p.updated_at
     from filter_results r
     join papers p on p.arxiv_id = r.arxiv_id
     where r.filter_name = ${name} and r.prompt_hash = ${filter["prompt_hash"]}
     order by r.confidence desc`;
+  // Institution links live in the graph: paper entity -> org entities.
+  const paperIds = new Map(rows.map((r) => [entityId("paper", paperRef(r["arxiv_id"])), r["arxiv_id"]]));
+  const orgLinks =
+    paperIds.size === 0
+      ? []
+      : await sql`
+          select l.from_id, e.display_name, e.entity_id
+          from links l
+          join entities e on e.entity_id = l.to_id
+          where l.from_id = any(${[...paperIds.keys()]})
+            and l.link_type in ('published_by', 'affiliated_org')
+            and e.kind = 'org'`;
+  const orgsByArxivId = new Map<string, Set<string>>();
+  for (const link of orgLinks) {
+    const arxivId = paperIds.get(link["from_id"])!;
+    const set = orgsByArxivId.get(arxivId) ?? new Set<string>();
+    set.add(link["display_name"]);
+    orgsByArxivId.set(arxivId, set);
+  }
   const shape = (r: (typeof rows)[number]) => ({
     arxivId: r["arxiv_id"],
     title: r["title"],
     abstract: r["abstract"],
     categories: r["categories"],
+    authors: r["authors"],
+    orgs: [...(orgsByArxivId.get(r["arxiv_id"]) ?? [])],
     confidence: Number(r["confidence"]),
     reason: r["reason"],
     updatedAt: r["updated_at"],
@@ -155,6 +176,18 @@ app.post("/api/jobs/ingest", async (c) => {
       ? {}
       : { categories: body.categories }),
   });
+  return c.json({ jobId });
+});
+
+const labsBody = z.object({ lab: z.string().optional() });
+
+app.post("/api/jobs/labs", async (c) => {
+  const body = labsBody.parse(await c.req.json());
+  const jobId = await enqueueJob(
+    sql,
+    "reactor:lab-publications",
+    body.lab === undefined ? {} : { lab: body.lab },
+  );
   return c.json({ jobId });
 });
 

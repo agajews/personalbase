@@ -34,8 +34,48 @@ export const agentPaperFilteredV1 = z.object({
 });
 export type AgentPaperFiltered = z.infer<typeof agentPaperFilteredV1>;
 
+/** A reference to an entity by kind + stable external ref; folds mint the id. */
+const entityRef = z.object({
+  kind: z.string().min(1),  // 'paper' | 'person' | 'org' | ...
+  ref: z.string().min(1),   // e.g. 'arxiv:2508.12345', 'anthropic'
+  displayName: z.string().optional(),
+});
+
+export const agentLinkAssertedV1 = z.object({
+  from: entityRef,
+  to: entityRef,
+  linkType: z.string().min(1), // 'published_by' | 'affiliated_with' | ...
+  confidence: z.number().min(0).max(1),
+  evidence: z.unknown().optional(),
+});
+export type AgentLinkAsserted = z.infer<typeof agentLinkAssertedV1>;
+
+export const agentPaperAffiliationsExtractedV1 = z.object({
+  arxivId: z.string(),
+  authors: z.array(
+    z.object({
+      name: z.string().min(1),
+      affiliations: z.array(
+        z.object({
+          raw: z.string(),            // as printed on the paper
+          org: z.string().min(1),     // canonical lowercase slug, e.g. 'deepmind'
+        }),
+      ),
+      email: z.string().optional(),
+    }),
+  ),
+});
+export type AgentPaperAffiliationsExtracted = z.infer<
+  typeof agentPaperAffiliationsExtractedV1
+>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
   { type: "agent.paper.filtered", versions: [{ schema: agentPaperFilteredV1 }] },
+  { type: "agent.link.asserted", versions: [{ schema: agentLinkAssertedV1 }] },
+  {
+    type: "agent.paper.affiliations_extracted",
+    versions: [{ schema: agentPaperAffiliationsExtractedV1 }],
+  },
 ]);

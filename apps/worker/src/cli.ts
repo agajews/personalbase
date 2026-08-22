@@ -25,6 +25,8 @@ const usage = `usage: pnpm nc <command>
   filters                                     list defined filters
   ingest-arxiv [--days N | --from <iso> --to <iso>] [--category <cat>]...
                                               ingest papers submitted in a range
+  ingest-labs [--lab openai|deepmind|anthropic|meta]
+                                              ingest lab publication pages
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
@@ -151,6 +153,20 @@ async function cmdIngestArxiv(args: string[]): Promise<void> {
   });
 }
 
+async function cmdIngestLabs(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { lab: { type: "string" } } });
+  await withDb(async (sql) => {
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "lab-publications")!,
+      { kind: "job", payload: values.lab === undefined ? {} : { lab: values.lab } },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    console.log(`lab ingest: ${result.emitted} events emitted, ${result.appended} new`);
+  });
+}
+
 async function cmdRunFilter(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -274,6 +290,9 @@ switch (command) {
     break;
   case "ingest-arxiv":
     await cmdIngestArxiv(rest);
+    break;
+  case "ingest-labs":
+    await cmdIngestLabs(rest);
     break;
   case "run-filter":
     await cmdRunFilter(rest);

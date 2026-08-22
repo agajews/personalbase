@@ -12,7 +12,11 @@ export {
   arxivPaperIngestedV1,
   userFilterDefinedV1,
   agentPaperFilteredV1,
+  agentLinkAssertedV1,
+  agentPaperAffiliationsExtractedV1,
   type ArxivPaperIngested,
   type UserFilterDefined,
   type AgentPaperFiltered,
+  type AgentLinkAsserted,
+  type AgentPaperAffiliationsExtracted,
 } from "./events.js";

@@ -44,6 +44,47 @@ async function fetchPage(query: string, start: number): Promise<{ total: number;
   return parseArxivAtom(await response.text());
 }
 
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Resolves a paper title to its arXiv entry via title search, accepting only
+ * an exact normalized-title match. Returns null when the paper is not on
+ * arXiv (or its lab-page title differs from the arXiv title).
+ */
+export async function resolveArxivByTitle(title: string): Promise<ArxivEntry | null> {
+  const url = new URL(apiUrl);
+  url.searchParams.set("search_query", `ti:"${title.replace(/"/g, "")}"`);
+  url.searchParams.set("max_results", "5");
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`arxiv API returned ${response.status} for title search`);
+  }
+  const { entries } = parseArxivAtom(await response.text());
+  const wanted = normalizeTitle(title);
+  return entries.find((e) => normalizeTitle(e.title) === wanted) ?? null;
+}
+
+/** Fetches canonical metadata for specific papers via the id_list API. */
+export async function fetchArxivByIds(ids: readonly string[]): Promise<ArxivEntry[]> {
+  const entries: ArxivEntry[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const url = new URL(apiUrl);
+    url.searchParams.set("id_list", ids.slice(i, i + 50).join(","));
+    url.searchParams.set("max_results", "50");
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`arxiv API returned ${response.status} for id_list`);
+    }
+    entries.push(...parseArxivAtom(await response.text()).entries);
+    if (i + 50 < ids.length) {
+      await sleep(pageDelayMs);
+    }
+  }
+  return entries;
+}
+
 export function entryToEvent(entry: ArxivEntry): ReactorEvent {
   return {
     type: "arxiv.paper.ingested",
