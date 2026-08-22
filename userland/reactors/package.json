@@ -1,0 +1,20 @@
+{
+  "name": "@nc/reactors",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@nc/folds": "workspace:*",
+    "@nc/process": "workspace:*",
+    "@nc/schema": "workspace:*",
+    "fast-xml-parser": "^5.0.0",
+    "postgres": "^3.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@nc/log": "workspace:*"
+  }
+}

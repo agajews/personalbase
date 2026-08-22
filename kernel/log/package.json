@@ -1,0 +1,16 @@
+{
+  "name": "@nc/log",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@nc/schema": "workspace:*",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "zod": "^4.4.3"
+  }
+}

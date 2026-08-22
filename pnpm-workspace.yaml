@@ -1,0 +1,6 @@
+packages:
+  - kernel/*
+  - userland/*
+  - apps/*
+allowBuilds:
+  esbuild: true

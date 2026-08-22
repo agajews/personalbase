@@ -1,0 +1,17 @@
+{
+  "name": "@nc/folds",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@nc/schema": "workspace:*",
+    "postgres": "^3.4.0",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@nc/log": "workspace:*",
+    "@nc/process": "workspace:*"
+  }
+}

@@ -1,0 +1,284 @@
+import { existsSync } from "node:fs";
+import { parseArgs } from "node:util";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  appendEvents,
+  connect,
+  kernelMigrationsDir,
+  migrate,
+  type Sql,
+} from "@nc/log";
+import { coreRegistry } from "@nc/schema";
+import {
+  catchUpEventReactors,
+  catchUpFolds,
+  processPendingJobs,
+  runReactor,
+} from "@nc/process";
+import { folds, reactors } from "./registry.js";
+
+const usage = `usage: pnpm nc <command>
+
+  migrate                                     apply kernel migrations
+  set-filter <name> --prompt <text> [--model <id>]
+                                              define or edit a filter (an event)
+  filters                                     list defined filters
+  ingest-arxiv [--days N | --from <iso> --to <iso>] [--category <cat>]...
+                                              ingest papers submitted in a range
+  run-filter [name] [--days N | --from <iso> --to <iso>]
+                                              judge ingested papers against filters
+  results <name> [--rejects]                  show verdicts for the current prompt
+  tail [--limit N]                            inspect the tail of the event log
+  daemon                                      run folds + reactors continuously
+`;
+
+function fail(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+function loadEnv(): void {
+  if (existsSync(".env")) {
+    process.loadEnvFile(".env");
+  }
+}
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    fail(`${name} is not set (put it in .env or the environment)`);
+  }
+  return value;
+}
+
+function dateRange(values: {
+  days?: string;
+  from?: string;
+  to?: string;
+}): { from: string; to: string } {
+  if (values.from !== undefined || values.to !== undefined) {
+    if (values.from === undefined || values.to === undefined) {
+      fail("--from and --to must be given together");
+    }
+    return { from: new Date(values.from).toISOString(), to: new Date(values.to).toISOString() };
+  }
+  const days = values.days === undefined ? 1 : Number(values.days);
+  if (!Number.isFinite(days) || days <= 0) {
+    fail(`invalid --days: ${values.days}`);
+  }
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 86_400_000);
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+
+async function withDb(f: (sql: Sql) => Promise<void>): Promise<void> {
+  const sql = connect(requireEnv("DATABASE_URL"));
+  try {
+    await migrate(sql, kernelMigrationsDir);
+    await f(sql);
+  } finally {
+    await sql.end();
+  }
+}
+
+async function cmdSetFilter(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { prompt: { type: "string" }, model: { type: "string" } },
+  });
+  const name = positionals[0];
+  if (name === undefined || values.prompt === undefined) {
+    fail("usage: set-filter <name> --prompt <text> [--model <id>]");
+  }
+  const model = values.model ?? "claude-opus-5";
+  await withDb(async (sql) => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.filter.defined",
+        schemaVersion: 1,
+        source: "ui:cli",
+        occurredAt: new Date().toISOString(),
+        payload: { name, prompt: values.prompt, model },
+      },
+    ]);
+    await catchUpFolds(sql, coreRegistry, folds);
+    const rows = await sql`select prompt_hash from filters where name = ${name}`;
+    console.log(`filter ${name} defined (model ${model}, prompt hash ${rows[0]!["prompt_hash"]})`);
+  });
+}
+
+async function cmdFilters(): Promise<void> {
+  await withDb(async (sql) => {
+    await catchUpFolds(sql, coreRegistry, folds);
+    const rows = await sql`select name, model, prompt_hash, prompt from filters order by name`;
+    if (rows.length === 0) {
+      console.log("no filters defined");
+      return;
+    }
+    for (const row of rows) {
+      console.log(`${row["name"]}  [${row["model"]}, ${row["prompt_hash"]}]\n  ${row["prompt"]}`);
+    }
+  });
+}
+
+async function cmdIngestArxiv(args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      days: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+      category: { type: "string", multiple: true },
+    },
+  });
+  const range = dateRange(values);
+  await withDb(async (sql) => {
+    const payload = {
+      ...range,
+      ...(values.category === undefined ? {} : { categories: values.category }),
+    };
+    console.log(`ingesting arxiv ${range.from} .. ${range.to}` +
+      (values.category === undefined ? " (all categories)" : ` [${values.category.join(", ")}]`));
+    const result = await runReactor(sql, coreRegistry, reactors.find((r) => r.name === "arxiv")!, {
+      kind: "job",
+      payload,
+    });
+    await catchUpFolds(sql, coreRegistry, folds);
+    console.log(
+      `ingested ${result.emitted} papers, ${result.appended} new (run ${result.runId})`,
+    );
+  });
+}
+
+async function cmdRunFilter(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      days: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+    },
+  });
+  const range = dateRange(values);
+  await withDb(async (sql) => {
+    await catchUpFolds(sql, coreRegistry, folds);
+    const payload = {
+      ...range,
+      ...(positionals[0] === undefined ? {} : { filter: positionals[0] }),
+    };
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "paper-filter")!,
+      { kind: "job", payload },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    const runRows = await sql`
+      select tokens_in, tokens_out from runs where run_id = ${result.runId}`;
+    const run = runRows[0]!;
+    console.log(
+      `judged: ${result.emitted} verdicts, ${result.appended} new ` +
+        `(${run["tokens_in"]} tokens in, ${run["tokens_out"]} out, run ${result.runId})`,
+    );
+  });
+}
+
+async function cmdResults(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { rejects: { type: "boolean" } },
+  });
+  const name = positionals[0];
+  if (name === undefined) {
+    fail("usage: results <name> [--rejects]");
+  }
+  await withDb(async (sql) => {
+    await catchUpFolds(sql, coreRegistry, folds);
+    const filterRows = await sql`select prompt_hash from filters where name = ${name}`;
+    if (filterRows.length === 0) {
+      fail(`no filter named ${name}`);
+    }
+    const hash = filterRows[0]!["prompt_hash"];
+    const verdict = values.rejects === true ? "reject" : "match";
+    const rows = await sql`
+      select r.arxiv_id, r.confidence, r.reason, p.title
+      from filter_results r
+      join papers p on p.arxiv_id = r.arxiv_id
+      where r.filter_name = ${name} and r.prompt_hash = ${hash} and r.verdict = ${verdict}
+      order by r.confidence desc`;
+    const totals = await sql`
+      select verdict, count(*)::int as n from filter_results
+      where filter_name = ${name} and prompt_hash = ${hash}
+      group by verdict`;
+    const counts = Object.fromEntries(totals.map((t) => [t["verdict"], t["n"]]));
+    console.log(
+      `${name} [${hash}]: ${counts["match"] ?? 0} match, ${counts["reject"] ?? 0} reject\n`,
+    );
+    for (const row of rows) {
+      console.log(`  ${row["arxiv_id"]}  (${Number(row["confidence"]).toFixed(2)})  ${row["title"]}`);
+      console.log(`      ${row["reason"]}`);
+    }
+  });
+}
+
+async function cmdTail(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { limit: { type: "string" } } });
+  const limit = values.limit === undefined ? 20 : Number(values.limit);
+  await withDb(async (sql) => {
+    const rows = await sql`
+      select seq, type, source, occurred_at, idempotency_key
+      from events order by seq desc limit ${limit}`;
+    for (const row of rows.reverse()) {
+      console.log(
+        `${row["seq"]}  ${new Date(row["occurred_at"]).toISOString()}  ${row["type"]}  ` +
+          `[${row["source"]}]  ${row["idempotency_key"] ?? ""}`,
+      );
+    }
+  });
+}
+
+async function cmdDaemon(): Promise<void> {
+  await withDb(async (sql) => {
+    console.log("worker daemon running (folds, event reactors, jobs); ctrl-c to stop");
+    while (true) {
+      await catchUpFolds(sql, coreRegistry, folds);
+      await catchUpEventReactors(sql, coreRegistry, reactors);
+      await processPendingJobs(sql, coreRegistry, reactors);
+      await sleep(2000);
+    }
+  });
+}
+
+loadEnv();
+const [command, ...rest] = process.argv.slice(2);
+switch (command) {
+  case "migrate":
+    await withDb(async () => console.log("migrations applied"));
+    break;
+  case "set-filter":
+    await cmdSetFilter(rest);
+    break;
+  case "filters":
+    await cmdFilters();
+    break;
+  case "ingest-arxiv":
+    await cmdIngestArxiv(rest);
+    break;
+  case "run-filter":
+    await cmdRunFilter(rest);
+    break;
+  case "results":
+    await cmdResults(rest);
+    break;
+  case "tail":
+    await cmdTail(rest);
+    break;
+  case "daemon":
+    await cmdDaemon();
+    break;
+  default:
+    fail(usage);
+}

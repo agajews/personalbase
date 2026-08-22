@@ -1,0 +1,16 @@
+{
+  "name": "@nc/worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@nc/folds": "workspace:*",
+    "@nc/log": "workspace:*",
+    "@nc/process": "workspace:*",
+    "@nc/reactors": "workspace:*",
+    "@nc/schema": "workspace:*",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

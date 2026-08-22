@@ -1,0 +1,16 @@
+{
+  "name": "newcomputer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "nc": "tsx apps/worker/src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
