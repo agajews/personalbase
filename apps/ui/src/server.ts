@@ -135,6 +135,85 @@ app.get("/api/results/:name", async (c) => {
   });
 });
 
+// The daily surface: papers from the window that either passed any filter's
+// current-prompt judge or carry a published_by link from a tracked lab.
+app.get("/api/feed", async (c) => {
+  const days = Number(c.req.query("days") ?? 3);
+  if (!Number.isFinite(days) || days <= 0 || days > 60) {
+    return c.json({ error: `invalid days: ${c.req.query("days")}` }, 400);
+  }
+  await catchUpFolds(sql, coreRegistry, folds);
+  const from = new Date(Date.now() - days * 86_400_000).toISOString();
+  // Recency = paper is new on arXiv OR new to us (lab backfills ingest older
+  // papers; they should still surface the day they arrive).
+  const matches = await sql`
+    select r.arxiv_id, r.filter_name, r.confidence, r.reason
+    from filter_results r
+    join filters f on f.name = r.filter_name and f.prompt_hash = r.prompt_hash
+    join papers p on p.arxiv_id = r.arxiv_id
+    where r.verdict = 'match' and (p.updated_at >= ${from} or p.ingested_at >= ${from})`;
+  const windowPapers = await sql`
+    select arxiv_id from papers where updated_at >= ${from} or ingested_at >= ${from}`;
+  const idToArxiv = new Map(
+    windowPapers.map((p) => [entityId("paper", paperRef(p["arxiv_id"])), p["arxiv_id"]]),
+  );
+  const labLinks =
+    idToArxiv.size === 0
+      ? []
+      : await sql`
+          select l.from_id, e.display_name
+          from links l
+          join entities e on e.entity_id = l.to_id
+          where l.from_id = any(${[...idToArxiv.keys()]})
+            and l.link_type = 'published_by' and e.kind = 'org'`;
+
+  const surfaced = new Map<
+    string,
+    { matches: { filter: string; confidence: number; reason: string }[]; labs: string[] }
+  >();
+  const entry = (arxivId: string) => {
+    const existing = surfaced.get(arxivId) ?? { matches: [], labs: [] };
+    surfaced.set(arxivId, existing);
+    return existing;
+  };
+  for (const m of matches) {
+    entry(m["arxiv_id"]).matches.push({
+      filter: m["filter_name"],
+      confidence: Number(m["confidence"]),
+      reason: m["reason"],
+    });
+  }
+  for (const l of labLinks) {
+    entry(idToArxiv.get(l["from_id"])!).labs.push(l["display_name"]);
+  }
+  if (surfaced.size === 0) {
+    return c.json({ days, items: [] });
+  }
+  const papers = await sql`
+    select arxiv_id, title, abstract, authors, categories, updated_at
+    from papers where arxiv_id = any(${[...surfaced.keys()]})`;
+  const items = papers
+    .map((p) => {
+      const why = surfaced.get(p["arxiv_id"])!;
+      return {
+        arxivId: p["arxiv_id"],
+        title: p["title"],
+        abstract: p["abstract"],
+        authors: p["authors"],
+        categories: p["categories"],
+        updatedAt: p["updated_at"],
+        labs: [...new Set(why.labs)],
+        matches: why.matches.sort((a, b) => b.confidence - a.confidence),
+      };
+    })
+    .sort((a, b) => {
+      const score = (i: typeof a) =>
+        (i.labs.length > 0 ? 1 : 0) + (i.matches[0]?.confidence ?? 0);
+      return score(b) - score(a);
+    });
+  return c.json({ days, items });
+});
+
 const filterBody = z.object({
   name: z.string().min(1).max(64),
   prompt: z.string().min(1),

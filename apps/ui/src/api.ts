@@ -60,6 +60,22 @@ export interface Results {
   rejects: Verdict[];
 }
 
+export interface FeedItem {
+  arxivId: string;
+  title: string;
+  abstract: string;
+  authors: string[];
+  categories: string[];
+  updatedAt: string;
+  labs: string[];
+  matches: { filter: string; confidence: number; reason: string }[];
+}
+
+export interface Feed {
+  days: number;
+  items: FeedItem[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   const body = await response.json();
@@ -71,6 +87,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   state: (): Promise<AppState> => request("/api/state"),
+  feed: (days: number): Promise<Feed> => request(`/api/feed?days=${days}`),
   results: (name: string): Promise<Results> =>
     request(`/api/results/${encodeURIComponent(name)}`),
   saveFilter: (body: { name: string; prompt: string; model: string }): Promise<void> =>

@@ -3,14 +3,16 @@ import type { Reactor, ReactorEvent } from "@nc/process";
 import { anthropicJudge, type JudgeFn, type PaperForJudging } from "./judge.js";
 
 export const paperFilterJobPayload = z.object({
-  from: z.iso.datetime({ offset: true }),
-  to: z.iso.datetime({ offset: true }),
+  /** Defaults to a trailing window ending now, matching the ingest sweep. */
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
   /** Filter name; omit to run every defined filter. */
   filter: z.string().optional(),
 });
 export type PaperFilterJobPayload = z.infer<typeof paperFilterJobPayload>;
 
 const chunkSize = 12;
+const defaultWindowDays = 3;
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -37,12 +39,23 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
   return {
     kind: "reactor",
     name: "paper-filter",
-    trigger: { kind: "manual" },
+    // Daily judging over the same trailing window the ingest sweep covers;
+    // already-judged (filter, prompt_hash, paper) triples are skipped, so the
+    // scheduled run only pays for genuinely new papers or edited prompts.
+    trigger: { kind: "cron", intervalHours: 24, payload: {} },
     async run(ctx, input): Promise<ReactorEvent[]> {
       if (input.kind !== "job") {
-        throw new Error("paper-filter reactor only supports manual job triggers");
+        throw new Error("paper-filter reactor only supports job triggers");
       }
-      const payload = paperFilterJobPayload.parse(input.payload);
+      const parsed = paperFilterJobPayload.parse(input.payload);
+      const to = parsed.to ?? new Date().toISOString();
+      const payload = {
+        ...parsed,
+        to,
+        from:
+          parsed.from ??
+          new Date(new Date(to).getTime() - defaultWindowDays * 86_400_000).toISOString(),
+      };
       const filters: FilterRow[] =
         payload.filter === undefined
           ? await ctx.sql`select name, prompt, model, prompt_hash from filters`

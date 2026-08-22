@@ -296,7 +296,9 @@ async function cmdDaemon(): Promise<void> {
       await catchUpFolds(sql, coreRegistry, folds);
       await catchUpEventReactors(sql, coreRegistry, reactors);
       await enqueueDueCronJobs(sql, reactors);
-      await processPendingJobs(sql, coreRegistry, reactors);
+      // One job per pass, so folds catch up between jobs (a judging job
+      // enqueued after an ingest job then sees the ingested papers).
+      await processPendingJobs(sql, coreRegistry, reactors, 1);
       await sleep(2000);
     }
   });

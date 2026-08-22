@@ -121,17 +121,20 @@ export async function catchUpEventReactors(
 }
 
 /**
- * Claims and runs pending manual jobs. A job's process is "reactor:<name>".
- * Returns the number of jobs run (including failed ones, which are retried
- * or marked dead by the queue).
+ * Claims and runs pending jobs. A job's process is "reactor:<name>". Returns
+ * the number of jobs run (including failed ones, which are retried or marked
+ * dead by the queue). `maxJobs` lets the daemon take one job per loop pass so
+ * folds catch up between jobs — a judging job enqueued after an ingest job
+ * then sees the ingested papers.
  */
 export async function processPendingJobs(
   sql: Sql,
   registry: SchemaRegistry,
   reactors: readonly Reactor[],
+  maxJobs = Number.POSITIVE_INFINITY,
 ): Promise<number> {
   let count = 0;
-  while (true) {
+  while (count < maxJobs) {
     const job = await claimJob(sql);
     if (job === null) {
       return count;
@@ -151,4 +154,5 @@ export async function processPendingJobs(
       await failJob(sql, job, message);
     }
   }
+  return count;
 }

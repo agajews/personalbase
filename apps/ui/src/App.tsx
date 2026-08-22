@@ -3,6 +3,8 @@ import {
   api,
   previewHash,
   type AppState,
+  type Feed,
+  type FeedItem,
   type FilterSummary,
   type Results,
   type Verdict,
@@ -74,6 +76,64 @@ function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; ope
   );
 }
 
+function FeedRow({
+  item,
+  hueFor,
+}: {
+  item: FeedItem;
+  hueFor: (filter: string) => number;
+}) {
+  const top = item.matches[0];
+  return (
+    <details className="verdict" open={false}>
+      <summary>
+        <span
+          className="confidence"
+          title={top === undefined ? "surfaced by lab" : `confidence ${top.confidence.toFixed(2)}`}
+        >
+          {top !== undefined && (
+            <span
+              className="confidence-fill"
+              style={{ width: `${top.confidence * 100}%`, background: `hsl(${hueFor(top.filter)} 45% 42%)` }}
+            />
+          )}
+        </span>
+        <span className="verdict-title">{item.title}</span>
+        {item.labs.map((lab) => (
+          <span key={lab} className="org-chip">
+            {lab}
+          </span>
+        ))}
+        {item.matches.map((m) => (
+          <span
+            key={m.filter}
+            className="hash-chip"
+            style={{
+              color: `hsl(${hueFor(m.filter)} 45% 30%)`,
+              background: `hsl(${hueFor(m.filter)} 50% 93%)`,
+              borderColor: `hsl(${hueFor(m.filter)} 35% 78%)`,
+            }}
+          >
+            {m.filter}
+          </span>
+        ))}
+        <a
+          className="arxiv-id"
+          href={`https://arxiv.org/abs/${item.arxivId}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {item.arxivId}
+        </a>
+      </summary>
+      {item.authors.length > 0 && <p className="verdict-authors">{item.authors.join(", ")}</p>}
+      {top !== undefined && <p className="verdict-reason">{top.reason}</p>}
+      <p className="verdict-abstract">{item.abstract}</p>
+    </details>
+  );
+}
+
 const newFilter: FilterSummary = {
   name: "",
   model: "claude-opus-5",
@@ -85,6 +145,8 @@ const newFilter: FilterSummary = {
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
+  const [view, setView] = useState<"feed" | "filter">("feed");
+  const [feed, setFeed] = useState<Feed | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [results, setResults] = useState<Results | null>(null);
@@ -123,6 +185,28 @@ export function App() {
       setSelected(state.filters[0]!.name);
     }
   }, [state, selected, creating]);
+
+  // Poll the feed while it is the active view.
+  useEffect(() => {
+    if (view !== "feed") {
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const f = await api.feed(3);
+        if (!cancelled) setFeed(f);
+      } catch {
+        if (!cancelled) setFeed(null);
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [view]);
 
   // Load the selected filter into the editor.
   useEffect(() => {
@@ -203,13 +287,25 @@ export function App() {
 
       <div className="columns">
         <aside>
+          <button
+            className={`filter-item today ${view === "feed" ? "active" : ""}`}
+            onClick={() => setView("feed")}
+          >
+            <span className="filter-name">Today</span>
+            <span className="filter-meta">
+              <span className="match-count">
+                {feed === null ? "…" : `${feed.items.length} surfaced`}
+              </span>
+            </span>
+          </button>
           <div className="rail-label">Filters</div>
           <nav>
             {state?.filters.map((f) => (
               <button
                 key={f.name}
-                className={`filter-item ${!creating && selected === f.name ? "active" : ""}`}
+                className={`filter-item ${view === "filter" && !creating && selected === f.name ? "active" : ""}`}
                 onClick={() => {
+                  setView("filter");
                   setCreating(false);
                   setSelected(f.name);
                 }}
@@ -225,6 +321,7 @@ export function App() {
           <button
             className="ghost"
             onClick={() => {
+              setView("filter");
               setCreating(true);
               setDraft({ name: "", model: "claude-opus-5", prompt: "" });
             }}
@@ -272,7 +369,32 @@ export function App() {
         </aside>
 
         <main>
-          {filter === null ? (
+          {view === "feed" ? (
+            <section className="results">
+              <div className="results-head">
+                <span className="results-count">
+                  {feed === null ? "loading…" : `${feed.items.length} surfaced`}
+                </span>
+                <span className="dot">·</span>
+                <span>filter matches and lab publications, last {feed?.days ?? 3} days</span>
+              </div>
+              {feed !== null && feed.items.length === 0 && (
+                <div className="empty">
+                  Nothing surfaced in this window yet — ingest papers and judge a filter, or
+                  wait for the daily sweeps.
+                </div>
+              )}
+              {feed?.items.map((item) => (
+                <FeedRow
+                  key={item.arxivId}
+                  item={item}
+                  hueFor={(name) =>
+                    hashHue(state?.filters.find((f) => f.name === name)?.promptHash ?? "000000")
+                  }
+                />
+              ))}
+            </section>
+          ) : filter === null ? (
             <div className="empty">No filters yet. Create one to start sifting the arXiv stream.</div>
           ) : (
             <>
