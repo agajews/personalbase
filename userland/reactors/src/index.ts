@@ -1,6 +1,7 @@
 export {
   arxivReactor,
   arxivJobPayload,
+  dailyCategories,
   entryToEvent,
   fetchArxivByIds,
   resolveArxivByTitle,

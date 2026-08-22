@@ -1,4 +1,5 @@
 import { jsonb, type Sql } from "@nc/log";
+import type { Reactor } from "./types.js";
 
 const maxAttempts = 3;
 const retryDelaySeconds = 60;
@@ -48,6 +49,39 @@ export async function claimJob(sql: Sql): Promise<ClaimedJob | null> {
 
 export async function completeJob(sql: Sql, jobId: string): Promise<void> {
   await sql`update jobs set status = 'done' where job_id = ${jobId}`;
+}
+
+/**
+ * Enqueues a job for each cron reactor that is due: no pending/running job
+ * and no run started within the interval. Guarding on any run (including
+ * failed ones) means a persistently failing reactor retries at most once per
+ * interval rather than hot-looping on LLM spend.
+ */
+export async function enqueueDueCronJobs(
+  sql: Sql,
+  reactors: readonly Reactor[],
+): Promise<string[]> {
+  const enqueued: string[] = [];
+  for (const reactor of reactors) {
+    if (reactor.trigger.kind !== "cron") {
+      continue;
+    }
+    const process = `reactor:${reactor.name}`;
+    const rows = await sql`
+      insert into jobs (process, payload)
+      select ${process}, ${jsonb(sql, reactor.trigger.payload)}
+      where not exists (
+          select 1 from jobs where process = ${process} and status in ('pending', 'running'))
+        and not exists (
+          select 1 from runs where process = ${process}
+            and started_at > now() - make_interval(hours => ${reactor.trigger.intervalHours}))
+      returning job_id`;
+    if (rows[0] !== undefined) {
+      console.log(`cron: enqueued ${process}`);
+      enqueued.push(rows[0]["job_id"]);
+    }
+  }
+  return enqueued;
 }
 
 /** Retries with a delay until maxAttempts, then marks the job dead. */

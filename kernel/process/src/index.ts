@@ -10,6 +10,7 @@ export type {
 export { catchUpFold, catchUpFolds } from "./foldRunner.js";
 export {
   enqueueJob,
+  enqueueDueCronJobs,
   claimJob,
   completeJob,
   failJob,

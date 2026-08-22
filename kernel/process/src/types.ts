@@ -23,6 +23,7 @@ export interface Fold {
 
 export type ReactorTrigger =
   | { readonly kind: "event"; readonly consumes: readonly EventTypePattern[] }
+  | { readonly kind: "cron"; readonly intervalHours: number; readonly payload: unknown }
   | { readonly kind: "manual" };
 
 export type ReactorInput =

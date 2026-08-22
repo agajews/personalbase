@@ -12,6 +12,7 @@ import { coreRegistry } from "@nc/schema";
 import {
   catchUpEventReactors,
   catchUpFolds,
+  enqueueDueCronJobs,
   processPendingJobs,
   runReactor,
 } from "@nc/process";
@@ -290,10 +291,11 @@ async function cmdDaemon(): Promise<void> {
     if (requeued.length > 0) {
       console.log(`requeued ${requeued.length} stale running job(s)`);
     }
-    console.log("worker daemon running (folds, event reactors, jobs); ctrl-c to stop");
+    console.log("worker daemon running (folds, event reactors, cron, jobs); ctrl-c to stop");
     while (true) {
       await catchUpFolds(sql, coreRegistry, folds);
       await catchUpEventReactors(sql, coreRegistry, reactors);
+      await enqueueDueCronJobs(sql, reactors);
       await processPendingJobs(sql, coreRegistry, reactors);
       await sleep(2000);
     }

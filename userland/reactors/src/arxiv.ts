@@ -4,12 +4,17 @@ import type { Reactor, ReactorEvent, ReactorInput } from "@nc/process";
 import { parseArxivAtom, type ArxivEntry } from "./arxivAtom.js";
 
 export const arxivJobPayload = z.object({
-  from: z.iso.datetime({ offset: true }),
-  to: z.iso.datetime({ offset: true }),
+  /** Defaults to a trailing window ending now (arXiv indexing lags 1-2 days). */
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
   /** arXiv categories, e.g. ["cs.LG", "cs.CL"]. Omit to ingest all of arXiv. */
   categories: z.array(z.string()).optional(),
 });
 export type ArxivJobPayload = z.infer<typeof arxivJobPayload>;
+
+/** What the daily cron sweep covers. */
+export const dailyCategories = ["cs.LG", "cs.CL", "cs.AI"];
+const defaultWindowDays = 3;
 
 const pageSize = 200;
 const pageDelayMs = 3000; // arXiv API etiquette
@@ -22,7 +27,11 @@ function submittedDateRange(fromIso: string, toIso: string): string {
 }
 
 function searchQuery(payload: ArxivJobPayload): string {
-  const range = submittedDateRange(payload.from, payload.to);
+  const to = payload.to ?? new Date().toISOString();
+  const from =
+    payload.from ??
+    new Date(new Date(to).getTime() - defaultWindowDays * 86_400_000).toISOString();
+  const range = submittedDateRange(from, to);
   if (payload.categories === undefined || payload.categories.length === 0) {
     return range;
   }
@@ -107,10 +116,11 @@ export function entryToEvent(entry: ArxivEntry): ReactorEvent {
 export const arxivReactor: Reactor = {
   kind: "reactor",
   name: "arxiv",
-  trigger: { kind: "manual" },
+  // Daily sweep with a trailing window; idempotency makes the overlap free.
+  trigger: { kind: "cron", intervalHours: 24, payload: { categories: dailyCategories } },
   async run(_ctx, input: ReactorInput): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
-      throw new Error("arxiv reactor only supports manual job triggers");
+      throw new Error("arxiv reactor only supports job triggers");
     }
     const payload = arxivJobPayload.parse(input.payload);
     const query = searchQuery(payload);
