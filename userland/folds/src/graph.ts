@@ -62,11 +62,20 @@ async function ensureEntity(
   seq: bigint,
 ): Promise<string> {
   const id = entityId(kind, ref);
+  // Shortest non-null display name wins: commutative, so the outcome is
+  // independent of event order (e.g. curated "Meta" beats the raw printed
+  // affiliation "Meta, Menlo Park, California, USA" whichever arrives first).
   await tx`
     insert into entities (entity_id, kind, canonical_id, display_name, created_seq)
     values (${id}, ${kind}, ${id}, ${displayName}, ${seq.toString()})
     on conflict (entity_id) do update
-      set display_name = coalesce(entities.display_name, excluded.display_name)`;
+      set display_name = case
+        when excluded.display_name is null then entities.display_name
+        when entities.display_name is null then excluded.display_name
+        when length(excluded.display_name) < length(entities.display_name)
+          then excluded.display_name
+        else entities.display_name
+      end`;
   return id;
 }
 
@@ -100,7 +109,7 @@ async function ensureLink(
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 2,
+  version: 3,
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",

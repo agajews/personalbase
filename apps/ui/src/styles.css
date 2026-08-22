@@ -368,6 +368,15 @@ textarea {
   font-weight: 600;
 }
 
+.feed-date {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 18px 2px 8px;
+}
+
 .verdict {
   background: var(--card);
   border: 1px solid var(--line);

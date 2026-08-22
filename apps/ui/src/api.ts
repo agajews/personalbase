@@ -66,6 +66,7 @@ export interface FeedItem {
   abstract: string;
   authors: string[];
   categories: string[];
+  publishedAt: string;
   updatedAt: string;
   labs: string[];
   matches: { filter: string; confidence: number; reason: string }[];

@@ -190,7 +190,7 @@ app.get("/api/feed", async (c) => {
     return c.json({ days, items: [] });
   }
   const papers = await sql`
-    select arxiv_id, title, abstract, authors, categories, updated_at
+    select arxiv_id, title, abstract, authors, categories, published_at, updated_at
     from papers where arxiv_id = any(${[...surfaced.keys()]})`;
   const items = papers
     .map((p) => {
@@ -201,12 +201,19 @@ app.get("/api/feed", async (c) => {
         abstract: p["abstract"],
         authors: p["authors"],
         categories: p["categories"],
+        publishedAt: p["published_at"],
         updatedAt: p["updated_at"],
         labs: [...new Set(why.labs)],
         matches: why.matches.sort((a, b) => b.confidence - a.confidence),
       };
     })
+    // Newest publication date first; within a day, labs and high-confidence
+    // matches lead. Old lab backfills sink to the bottom naturally.
     .sort((a, b) => {
+      const day = (i: typeof a) => new Date(i.publishedAt).toISOString().slice(0, 10);
+      if (day(a) !== day(b)) {
+        return day(a) < day(b) ? 1 : -1;
+      }
       const score = (i: typeof a) =>
         (i.labs.length > 0 ? 1 : 0) + (i.matches[0]?.confidence ?? 0);
       return score(b) - score(a);

@@ -134,6 +134,36 @@ function FeedRow({
   );
 }
 
+/** Items arrive sorted by publication date desc; preserve order, bucket by day. */
+function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
+  const groups: [string, FeedItem[]][] = [];
+  for (const item of items) {
+    const day = new Date(item.publishedAt).toISOString().slice(0, 10);
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last[0] === day) {
+      last[1].push(item);
+    } else {
+      groups.push([day, [item]]);
+    }
+  }
+  return groups;
+}
+
+function formatDay(day: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  if (day === today) {
+    return "today";
+  }
+  const date = new Date(`${day}T12:00:00Z`);
+  const sameYear = day.slice(0, 4) === today.slice(0, 4);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
 const newFilter: FilterSummary = {
   name: "",
   model: "claude-opus-5",
@@ -384,15 +414,23 @@ export function App() {
                   wait for the daily sweeps.
                 </div>
               )}
-              {feed?.items.map((item) => (
-                <FeedRow
-                  key={item.arxivId}
-                  item={item}
-                  hueFor={(name) =>
-                    hashHue(state?.filters.find((f) => f.name === name)?.promptHash ?? "000000")
-                  }
-                />
-              ))}
+              {feed !== null &&
+                groupByPublicationDay(feed.items).map(([day, items]) => (
+                  <div key={day}>
+                    <div className="feed-date">{formatDay(day)}</div>
+                    {items.map((item) => (
+                      <FeedRow
+                        key={item.arxivId}
+                        item={item}
+                        hueFor={(name) =>
+                          hashHue(
+                            state?.filters.find((f) => f.name === name)?.promptHash ?? "000000",
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                ))}
             </section>
           ) : filter === null ? (
             <div className="empty">No filters yet. Create one to start sifting the arXiv stream.</div>
