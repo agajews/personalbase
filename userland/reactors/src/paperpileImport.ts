@@ -43,9 +43,12 @@ export function paperpileItemToEvent(raw: unknown): ReactorEvent {
     payload: {
       paperpileId: item._id,
       pubtype: item.pubtype,
-      // 25 of 1159 items in a real export have no title (mostly websites);
-      // fall back rather than dropping them.
-      title: item.title ?? url ?? `(untitled ${item._id})`,
+      // Some items have a missing or empty title (mostly websites); fall
+      // back rather than dropping them.
+      title:
+        (item.title !== undefined && item.title.trim() !== "" ? item.title.trim() : undefined) ??
+        url ??
+        `(untitled ${item._id})`,
       authors,
       ...(year !== undefined && Number.isFinite(year) ? { year } : {}),
       ...(item.abstract === undefined ? {} : { abstract: item.abstract }),
