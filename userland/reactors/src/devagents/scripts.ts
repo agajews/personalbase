@@ -78,6 +78,8 @@ git checkout -qb "$DEV_BRANCH" "origin/$DEV_TRUNK" \
   || { echo '{"error":"branch checkout failed"}' > /nc/result.json; exit 1; }
 echo "[nc] installing dependencies"
 corepack enable > /dev/null 2>&1 || true
+# The sprite image ships node but not pnpm (and corepack may be absent).
+command -v pnpm > /dev/null 2>&1 || npm install -g pnpm > /dev/null 2>&1
 pnpm install --frozen-lockfile > /dev/null 2>&1 \
   || { echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
 echo "[nc] installing claude code"
@@ -154,6 +156,7 @@ git rebase "origin/$DEV_TRUNK" \
   || { echo '{"error":"rebase conflict; resolve manually"}' > /nc/result.json; exit 1; }
 echo "[nc] installing dependencies"
 corepack enable > /dev/null 2>&1 || true
+command -v pnpm > /dev/null 2>&1 || npm install -g pnpm > /dev/null 2>&1
 pnpm install --frozen-lockfile > /dev/null 2>&1 || pnpm install > /dev/null 2>&1 \
   || { echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
 echo "[nc] typechecking the rebased PR"
