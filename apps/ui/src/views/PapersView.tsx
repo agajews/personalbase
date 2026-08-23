@@ -21,6 +21,16 @@ function PaperRow({ item, onMarked }: { item: PaperListItem; onMarked: () => voi
         {item.orgs.map((org) => (
           <EntityChip key={org.entityId} entityId={org.entityId} name={org.name} className="org-chip" />
         ))}
+        {item.categories.slice(0, 1).map((cat) => (
+          <a
+            key={cat}
+            className="cat-chip"
+            href={`#/papers/${encodeURIComponent(cat)}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {cat}
+          </a>
+        ))}
         <span className="paper-date">
           {formatDay(new Date(item.publishedAt).toISOString().slice(0, 10))}
         </span>
