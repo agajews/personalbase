@@ -6,3 +6,6 @@ apps/ui/dist
 .claude
 Dockerfile
 fly.toml
+experiments
+Dockerfile.ui
+fly.ui.toml

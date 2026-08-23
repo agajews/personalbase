@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { getSignedCookie, setSignedCookie } from "hono/cookie";
 import { z } from "zod";
 import {
   appendEvents,
@@ -41,6 +43,75 @@ const sql: Sql = connect(databaseUrl);
 await migrate(sql, kernelMigrationsDir);
 
 const app = new Hono();
+
+// ---- auth ----
+// Enabled whenever UI_PASSWORD is set (always in deployment; local dev binds
+// to 127.0.0.1 and runs open). Sessions are cookies signed with a key derived
+// from the password, so rotating the password invalidates every session. The
+// guard must be registered before the routes it protects.
+const uiPassword = process.env["UI_PASSWORD"] ?? "";
+const host = process.env["HOST"] ?? "127.0.0.1";
+const port = Number(process.env["PORT"] ?? 4680);
+if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost") {
+  console.error(`refusing to bind ${host} without UI_PASSWORD set`);
+  process.exit(1);
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+const loginPage = (message: string) => `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>personalbase</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #ddd;
+         display: grid; place-items: center; min-height: 100dvh; margin: 0; }
+  form { display: flex; gap: 8px; flex-direction: column; width: min(320px, 80vw); }
+  input { font-size: 16px; padding: 10px 12px; border-radius: 8px; border: 1px solid #444;
+          background: #1c1c1c; color: #eee; }
+  button { font-size: 15px; padding: 10px; border-radius: 8px; border: none;
+           background: #3a6ea5; color: white; cursor: pointer; }
+  .msg { color: #d08080; font-size: 13px; min-height: 1em; }
+</style></head>
+<body><form method="post" action="/login">
+  <input type="password" name="password" placeholder="password" autofocus autocomplete="current-password">
+  <button type="submit">enter</button>
+  <div class="msg">${message}</div>
+</form></body></html>`;
+
+if (uiPassword !== "") {
+  const cookieSecret = createHmac("sha256", uiPassword).update("nc-ui-session").digest("hex");
+  const session = { path: "/", httpOnly: true, secure: true, sameSite: "Lax" as const,
+                    maxAge: 90 * 86_400 };
+  app.get("/healthz", (c) => c.text("ok"));
+  app.get("/login", (c) => c.html(loginPage("")));
+  app.post("/login", async (c) => {
+    const form = await c.req.parseBody();
+    const password = typeof form["password"] === "string" ? form["password"] : "";
+    if (!safeEqual(password, uiPassword)) {
+      return c.html(loginPage("wrong password"), 401);
+    }
+    await setSignedCookie(c, "nc_session", "ok", cookieSecret, session);
+    return c.redirect("/");
+  });
+  app.use("*", async (c, next) => {
+    if ((await getSignedCookie(c, cookieSecret, "nc_session")) === "ok") {
+      return next();
+    }
+    // Bearer <password> lets curl and future agents skip the cookie dance.
+    const bearer = c.req.header("authorization") ?? "";
+    if (safeEqual(bearer, `Bearer ${uiPassword}`)) {
+      return next();
+    }
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    return c.redirect("/login");
+  });
+}
 
 function dateRange(days: number): { from: string; to: string } {
   const to = new Date();
@@ -474,6 +545,6 @@ app.onError((error, c) => {
 app.use("*", serveStatic({ root: "./apps/ui/dist" }));
 app.get("*", serveStatic({ path: "./apps/ui/dist/index.html" }));
 
-serve({ fetch: app.fetch, port: 4680, hostname: "127.0.0.1" }, (info) => {
-  console.log(`ui at http://127.0.0.1:${info.port}`);
+serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+  console.log(`ui at http://${host}:${info.port}`);
 });

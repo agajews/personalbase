@@ -1,0 +1,11 @@
+# UI image: the Hono server serving the API and the built frontend. Reads
+# fold tables and appends events / enqueues jobs against DATABASE_URL; the
+# worker daemon (its own Fly app) executes the jobs.
+FROM node:23-slim
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+WORKDIR /app
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @nc/ui build
+CMD ["pnpm", "exec", "tsx", "apps/ui/src/server.ts"]
