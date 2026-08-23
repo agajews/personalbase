@@ -31,6 +31,8 @@ export {
   type UserDevmergeRequested,
   type DevPrMerged,
   type DevRunFinished,
+  agentTaxonomyProposedV1,
+  type AgentTaxonomyProposed,
   type UserPaperMarked,
   type ArxivPaperIngested,
   type UserFilterDefined,

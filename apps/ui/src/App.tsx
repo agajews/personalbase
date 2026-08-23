@@ -10,6 +10,7 @@ import { MarkedView } from "./views/MarkedView.js";
 import { PapersView } from "./views/PapersView.js";
 import { AgentsView } from "./views/AgentsView.js";
 import { TaskView } from "./views/TaskView.js";
+import { TopicsView } from "./views/TopicsView.js";
 
 type Route =
   | { kind: "feed" }
@@ -21,6 +22,7 @@ type Route =
   | { kind: "papers"; category: string | null }
   | { kind: "agents" }
   | { kind: "task"; uid: string }
+  | { kind: "topics"; slug: string | null }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -50,6 +52,11 @@ function parseRoute(hash: string): Route {
       return parts[1] !== undefined && parts[1] !== ""
         ? { kind: "task", uid: parts[1] }
         : { kind: "agents" };
+    case "topics":
+      return {
+        kind: "topics",
+        slug: parts[1] !== undefined && parts[1] !== "" ? decodeURIComponent(parts[1]) : null,
+      };
     case "saved":
       return { kind: "marked", mark: "saved" };
     case "want-to-read":
@@ -175,7 +182,7 @@ export function App() {
             </span>
           </button>
           <button
-            className={`filter-item today ${route.kind === "papers" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "papers" ? "active" : ""}`}
             onClick={() => navTo("/papers")}
           >
             <span className="filter-name">All papers</span>
@@ -184,7 +191,13 @@ export function App() {
             </span>
           </button>
           <button
-            className={`filter-item ${route.kind === "agents" || route.kind === "task" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "topics" ? "active" : ""}`}
+            onClick={() => navTo("/topics")}
+          >
+            <span className="filter-name">Topics</span>
+          </button>
+          <button
+            className={`filter-item today ${route.kind === "agents" || route.kind === "task" ? "active" : ""}`}
             onClick={() => navTo("/agents")}
           >
             <span className="filter-name">Agents</span>
@@ -275,6 +288,7 @@ export function App() {
           {route.kind === "papers" && <PapersView category={route.category} />}
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
+          {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

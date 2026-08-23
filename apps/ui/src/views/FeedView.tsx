@@ -51,6 +51,16 @@ function FeedRow({
         {item.labs.map((lab) => (
           <EntityChip key={lab.entityId} entityId={lab.entityId} name={lab.name} className="org-chip" />
         ))}
+        {item.categories.slice(0, 1).map((cat) => (
+          <a
+            key={cat}
+            className="cat-chip"
+            href={`#/papers/${encodeURIComponent(cat)}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {cat}
+          </a>
+        ))}
         {item.matches.map((m) => (
           <span
             key={m.filter}

@@ -175,6 +175,18 @@ export const devRunFinishedV1 = z.object({
   error: z.string().nullable(),
 });
 export type DevRunFinished = z.infer<typeof devRunFinishedV1>;
+export const agentTaxonomyProposedV1 = z.object({
+  /** Identifies this scheme version (hash of its categories). */
+  schemeId: z.string().min(1),
+  categories: z.array(
+    z.object({
+      slug: z.string().min(1), // kebab-case, stable within a scheme
+      name: z.string().min(1),
+      description: z.string(),
+    }),
+  ),
+});
+export type AgentTaxonomyProposed = z.infer<typeof agentTaxonomyProposedV1>;
 
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
@@ -200,4 +212,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "user.devmerge.requested", versions: [{ schema: userDevmergeRequestedV1 }] },
   { type: "dev.pr.merged", versions: [{ schema: devPrMergedV1 }] },
   { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
+  { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
 ]);

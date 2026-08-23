@@ -30,6 +30,7 @@ const usage = `usage: pnpm nc <command>
                                               ingest lab publication pages
   import-paperpile <path>                     import a Paperpile library JSON export
   backfill-library                            fetch arXiv metadata for library papers
+  classify [--regenerate]                     LLM-classify saved items into topic groups
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
@@ -210,6 +211,31 @@ async function cmdBackfillLibrary(): Promise<void> {
   });
 }
 
+async function cmdClassify(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { regenerate: { type: "boolean" } } });
+  await withDb(async (sql) => {
+    await catchUpFolds(sql, coreRegistry, folds);
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "taxonomy")!,
+      { kind: "job", payload: values.regenerate === true ? { regenerate: true } : {} },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    const groups = await sql`
+      select tc.name, count(l.from_id)::int as n
+      from taxonomy_categories tc
+      left join links l on l.link_type = 'classified_as'
+        and l.evidence->>'schemeId' = tc.scheme_id
+        and l.to_id in (select entity_id from entities where kind = 'topic' and ref = 'taxonomy:' || tc.slug)
+      group by tc.name, tc.position order by tc.position`;
+    console.log(`classified: ${result.emitted} events, ${result.appended} new`);
+    for (const g of groups) {
+      console.log(`  ${g["n"]}\t${g["name"]}`);
+    }
+  });
+}
+
 async function cmdRunFilter(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -345,6 +371,9 @@ switch (command) {
     break;
   case "backfill-library":
     await cmdBackfillLibrary();
+    break;
+  case "classify":
+    await cmdClassify(rest);
     break;
   case "run-filter":
     await cmdRunFilter(rest);

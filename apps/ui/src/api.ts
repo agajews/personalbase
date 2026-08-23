@@ -181,6 +181,27 @@ export interface PapersPage {
   items: PaperListItem[];
 }
 
+export interface TopicGroup {
+  slug: string;
+  name: string;
+  description: string;
+  items: number;
+}
+
+export interface TopicItems {
+  slug: string;
+  name: string;
+  description: string;
+  items: {
+    entityId: string;
+    kind: string;
+    title: string | null;
+    arxivId: string | null;
+    mark: Mark | null;
+    confidence: number;
+  }[];
+}
+
 export interface TableList {
   tables: { name: string; rows: number }[];
 }
@@ -233,6 +254,12 @@ export const api = {
   },
   categories: (): Promise<{ categories: { name: string; papers: number }[] }> =>
     request("/api/categories"),
+  topics: (): Promise<{ schemeId: string | null; groups: TopicGroup[] }> =>
+    request("/api/topics"),
+  topicItems: (slug: string): Promise<TopicItems> =>
+    request(`/api/topics/${encodeURIComponent(slug)}`),
+  classify: (regenerate: boolean): Promise<{ jobId: string }> =>
+    post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (
     name: string,
