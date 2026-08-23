@@ -5,6 +5,7 @@ import { userDevtaskCreatedV1 } from "@nc/schema";
 import { devPollPayload, finishedEvent, launchRun, pollRun } from "./harness.js";
 import type { SandboxProvider } from "./sandbox.js";
 import { spritesProvider } from "./sandbox.js";
+import { anthropicTitler, fallbackTitle, type Titler } from "./titler.js";
 import {
   devConfigFromEnv,
   featureFinishScript,
@@ -39,12 +40,13 @@ function branchSlug(title: string): string {
 export function makeDevAgentReactor(
   provider: SandboxProvider,
   config: () => DevConfig = devConfigFromEnv,
+  titler: Titler = anthropicTitler,
 ): Reactor {
   return {
     kind: "reactor",
     name: "dev-agent",
     trigger: { kind: "event", consumes: ["user.devtask.created"] },
-    async run(_ctx, input): Promise<ReactorResult> {
+    async run(ctx, input): Promise<ReactorResult> {
       if (input.kind === "event") {
         const task = userDevtaskCreatedV1.parse(input.event.payload);
         const runUid = randomUUID();
@@ -56,8 +58,27 @@ export function makeDevAgentReactor(
           const message = error instanceof Error ? error.message : String(error);
           return [finishedEvent({ taskUid, runUid }, "failed", null, message)];
         }
-        const branch = `agent/${branchSlug(task.title)}-${runUid.slice(0, 8)}`;
-        return launchRun(provider, {
+        // The title is derived, not typed: a small LLM call at launch. A
+        // titler failure never blocks the run — fall back to the spec's
+        // first line.
+        let title: string;
+        try {
+          const result = await titler(task.spec);
+          ctx.recordUsage(result.usage);
+          title = result.title;
+        } catch {
+          title = fallbackTitle(task.spec);
+        }
+        const titled: ReactorEvent = {
+          type: "dev.task.titled",
+          schemaVersion: 1,
+          occurredAt: new Date().toISOString(),
+          causedByUid: taskUid,
+          idempotencyKey: `dev:${taskUid}:title`,
+          payload: { taskUid, title },
+        };
+        const branch = `agent/${branchSlug(title)}-${runUid.slice(0, 8)}`;
+        const launch = await launchRun(provider, {
           reactorName: "dev-agent",
           kind: "feature",
           taskUid,
@@ -69,7 +90,7 @@ export function makeDevAgentReactor(
               repo: cfg.repo,
               trunk: cfg.trunk,
               branch,
-              title: task.title,
+              title,
               spec: task.spec,
             }),
             "finish.mjs": featureFinishScript,
@@ -78,11 +99,15 @@ export function makeDevAgentReactor(
             DEV_REPO: cfg.repo,
             DEV_TRUNK: cfg.trunk,
             DEV_BRANCH: branch,
-            DEV_TITLE: task.title,
+            DEV_TITLE: title,
             GITHUB_TOKEN: cfg.githubToken,
             ANTHROPIC_API_KEY: cfg.anthropicApiKey,
           },
         });
+        return {
+          events: [titled, ...launch.events],
+          ...(launch.followUps === undefined ? {} : { followUps: launch.followUps }),
+        };
       }
       const payload = devPollPayload.parse(input.payload);
       return pollRun(provider, "dev-agent", payload, (result) => {

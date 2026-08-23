@@ -115,11 +115,17 @@ function upcastMarkedV1(previous: unknown): unknown {
 // ---- dev agents (background agents modifying this system's own code) ----
 
 export const userDevtaskCreatedV1 = z.object({
-  title: z.string().min(1).max(200),
-  /** The full prompt handed to the coding agent. */
+  /** The full prompt handed to the coding agent; the title is generated. */
   spec: z.string().min(1),
 });
 export type UserDevtaskCreated = z.infer<typeof userDevtaskCreatedV1>;
+
+/** Emitted by the dev-agent at launch: an LLM-written title for the task. */
+export const devTaskTitledV1 = z.object({
+  taskUid: z.uuid(),
+  title: z.string().min(1).max(200),
+});
+export type DevTaskTitled = z.infer<typeof devTaskTitledV1>;
 
 export const devRunStartedV1 = z.object({
   /** event_uid of the user.devtask.created event this run works on. */
@@ -206,6 +212,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
     ],
   },
   { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
+  { type: "dev.task.titled", versions: [{ schema: devTaskTitledV1 }] },
   { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },
   { type: "dev.pr.opened", versions: [{ schema: devPrOpenedV1 }] },

@@ -3,6 +3,7 @@ import {
   devPrOpenedV1,
   devRunFinishedV1,
   devRunStartedV1,
+  devTaskTitledV1,
   devTranscriptAppendedV1,
   userDevmergeRequestedV1,
   userDevtaskCreatedV1,
@@ -19,9 +20,10 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 1,
+  version: 2, // generated titles: spec-only task events + dev.task.titled
   consumes: [
     "user.devtask.created",
+    "dev.task.titled",
     "user.devmerge.requested",
     "dev.run.started",
     "dev.transcript.appended",
@@ -106,10 +108,21 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
   const at = event.occurredAt.toISOString();
   if (event.type === "user.devtask.created") {
     const task = userDevtaskCreatedV1.parse(event.payload);
+    // Placeholder title until dev.task.titled lands (deterministic, so replay
+    // converges): the spec's first line, truncated.
+    const first = (task.spec.trim().split("\n")[0] ?? "").trim() || "dev task";
+    const placeholder = first.length > 80 ? `${first.slice(0, 77)}…` : first;
     await tx`
       insert into dev_tasks (task_uid, title, spec, status, created_at, updated_seq)
-      values (${event.eventUid}, ${task.title}, ${task.spec}, 'queued', ${at}, ${seq})
+      values (${event.eventUid}, ${placeholder}, ${task.spec}, 'queued', ${at}, ${seq})
       on conflict (task_uid) do nothing`;
+    return;
+  }
+  if (event.type === "dev.task.titled") {
+    const titled = devTaskTitledV1.parse(event.payload);
+    await tx`
+      update dev_tasks set title = ${titled.title}, updated_seq = ${seq}
+      where task_uid = ${titled.taskUid}`;
     return;
   }
   if (event.type === "user.devmerge.requested") {

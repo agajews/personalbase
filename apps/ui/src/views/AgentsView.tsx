@@ -17,7 +17,6 @@ export function DevStatusChip({ status }: { status: string }) {
 
 export function AgentsView() {
   const [tasks, setTasks] = useState<DevTaskListItem[] | null>(null);
-  const [title, setTitle] = useState("");
   const [spec, setSpec] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -46,10 +45,9 @@ export function AgentsView() {
   }, [tick]);
 
   const submit = async () => {
-    if (title.trim() === "" || spec.trim() === "") return;
+    if (spec.trim() === "") return;
     try {
-      await api.createDevTask(title.trim(), spec.trim());
-      setTitle("");
+      await api.createDevTask(spec.trim());
       setSpec("");
       setError(null);
       setTick((t) => t + 1);
@@ -66,19 +64,13 @@ export function AgentsView() {
         and opens a PR. You approve the merge from the task page.
       </p>
       <div className="dev-new-task">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Task title, e.g. Add a papers-by-org view"
-          maxLength={200}
-        />
         <textarea
           value={spec}
           onChange={(e) => setSpec(e.target.value)}
           rows={5}
-          placeholder="What should the agent build? Be specific about behavior and where it lives."
+          placeholder="What should the agent build? Be specific about behavior and where it lives. A title is generated for you."
         />
-        <button onClick={() => void submit()} disabled={title.trim() === "" || spec.trim() === ""}>
+        <button onClick={() => void submit()} disabled={spec.trim() === ""}>
           Start agent
         </button>
       </div>

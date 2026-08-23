@@ -66,6 +66,12 @@ export {
 } from "./devagents/sandbox.js";
 export { devConfigFromEnv, type DevConfig } from "./devagents/scripts.js";
 export {
+  anthropicTitler,
+  fallbackTitle,
+  type Titler,
+  type TitleResult,
+} from "./devagents/titler.js";
+export {
   taxonomyReactor,
   makeTaxonomyReactor,
   taxonomyJobPayload,

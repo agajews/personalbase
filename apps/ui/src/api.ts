@@ -287,8 +287,8 @@ export const api = {
     request(`/api/dev/tasks/${encodeURIComponent(uid)}`),
   devTranscript: (runUid: string, after: number): Promise<{ chunks: TranscriptChunk[] }> =>
     request(`/api/dev/runs/${encodeURIComponent(runUid)}/transcript?after=${after}`),
-  createDevTask: (title: string, spec: string): Promise<unknown> =>
-    post("/api/dev/tasks", { title, spec }),
+  createDevTask: (spec: string): Promise<unknown> =>
+    post("/api/dev/tasks", { spec }),
   requestMerge: (taskUid: string, prNumber: number): Promise<unknown> =>
     post("/api/dev/merge", { taskUid, prNumber }),
 };

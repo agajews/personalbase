@@ -861,7 +861,6 @@ app.get("/api/dev/runs/:uid/transcript", async (c) => {
 });
 
 const devTaskBody = z.object({
-  title: z.string().min(1).max(200),
   spec: z.string().min(1),
 });
 

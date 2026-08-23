@@ -74,7 +74,12 @@ const config = (): DevConfig => ({
   flyDeployTokenUi: "fly-ui",
 });
 
-const devAgent = makeDevAgentReactor(provider, config);
+const fakeTitler = async (spec: string) => ({
+  title: spec.includes("fails") ? "Doomed task" : "Add a widget",
+  usage: { tokensIn: 10, tokensOut: 5 },
+});
+
+const devAgent = makeDevAgentReactor(provider, config, fakeTitler);
 const devMerge = makeDevMergeReactor(provider, config);
 
 async function duePolls(): Promise<number> {
@@ -92,10 +97,19 @@ describe("dev-agent flow", () => {
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { title: "Add a widget", spec: "Build the widget view." },
+        payload: { spec: "Build the widget view." },
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+
+    // The title is generated at launch and emitted as its own event.
+    const titled = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["dev.task.titled"],
+      limit: 10,
+    });
+    expect(titled).toHaveLength(1);
+    expect((titled[0]!.payload as { title: string }).title).toBe("Add a widget");
 
     const started = await readEvents(sql, coreRegistry, {
       afterSeq: 0n,
@@ -153,8 +167,9 @@ describe("dev-agent flow", () => {
     expect(await duePolls()).toBe(0);
 
     await catchUpFold(sql, coreRegistry, devFold);
-    const tasks = await sql`select status from dev_tasks`;
+    const tasks = await sql`select status, title from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("pr_open");
+    expect(tasks[0]!["title"]).toBe("Add a widget");
     const runs = await sql`select status, pr_number, sandbox from dev_runs`;
     expect(runs[0]!["status"]).toBe("succeeded");
     expect(runs[0]!["pr_number"]).toBe(7);
@@ -212,7 +227,7 @@ describe("dev-agent flow", () => {
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { title: "Doomed task", spec: "This one fails." },
+        payload: { spec: "This one fails." },
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
