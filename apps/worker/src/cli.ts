@@ -6,6 +6,7 @@ import {
   connect,
   kernelMigrationsDir,
   migrate,
+  readEvents,
   type Sql,
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
@@ -31,6 +32,8 @@ const usage = `usage: pnpm nc <command>
   import-paperpile <path>                     import a Paperpile library JSON export
   backfill-library                            fetch arXiv metadata for library papers
   classify [--regenerate]                     LLM-classify saved items into topic groups
+  redrive <reactor> <seq>                     re-run an event reactor on one event
+                                              (e.g. a skipped poison event, after a fix)
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
@@ -236,6 +239,33 @@ async function cmdClassify(args: string[]): Promise<void> {
   });
 }
 
+async function cmdRedrive(args: string[]): Promise<void> {
+  const [name, seqArg] = args;
+  if (name === undefined || seqArg === undefined || !/^\d+$/.test(seqArg)) {
+    fail("usage: redrive <reactor> <seq>");
+  }
+  const reactor = reactors.find((r) => r.name === name);
+  if (reactor === undefined) {
+    fail(`no reactor named ${name}`);
+  }
+  await withDb(async (sql) => {
+    const events = await readEvents(sql, coreRegistry, {
+      afterSeq: BigInt(seqArg) - 1n,
+      limit: 1,
+    });
+    const event = events[0];
+    if (event === undefined || event.seq !== BigInt(seqArg)) {
+      fail(`no event at seq ${seqArg}`);
+    }
+    const result = await runReactor(sql, coreRegistry, reactor, { kind: "event", event });
+    await catchUpFolds(sql, coreRegistry, folds);
+    console.log(
+      `redrive ${name} on seq ${seqArg} (${event.type}): ` +
+        `${result.emitted} emitted, ${result.appended} new (run ${result.runId})`,
+    );
+  });
+}
+
 async function cmdRunFilter(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -383,6 +413,9 @@ switch (command) {
     break;
   case "classify":
     await cmdClassify(rest);
+    break;
+  case "redrive":
+    await cmdRedrive(rest);
     break;
   case "run-filter":
     await cmdRunFilter(rest);
