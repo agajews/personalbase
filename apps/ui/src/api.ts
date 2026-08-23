@@ -42,13 +42,20 @@ export interface AppState {
   tail: TailRow[];
 }
 
+/** A clickable reference to an entity. */
+export interface EntityRef {
+  entityId: string;
+  name: string;
+}
+
 export interface Verdict {
   arxivId: string;
+  entityId: string;
   title: string;
   abstract: string;
   categories: string[];
-  authors: string[];
-  orgs: string[];
+  authors: EntityRef[];
+  orgs: EntityRef[];
   confidence: number;
   reason: string;
   updatedAt: string;
@@ -62,19 +69,86 @@ export interface Results {
 
 export interface FeedItem {
   arxivId: string;
+  entityId: string;
   title: string;
   abstract: string;
-  authors: string[];
+  authors: EntityRef[];
   categories: string[];
   publishedAt: string;
   updatedAt: string;
-  labs: string[];
+  labs: EntityRef[];
   matches: { filter: string; confidence: number; reason: string }[];
 }
 
 export interface Feed {
   days: number;
   items: FeedItem[];
+}
+
+export interface EntityLink {
+  linkType: string;
+  assertedBy: string;
+  confidence: number;
+  other: { entityId: string; kind: string; displayName: string | null };
+}
+
+export interface EntityPage {
+  entity: { entityId: string; kind: string; displayName: string | null };
+  identifiers: { scheme: string; value: string }[];
+  linksOut: EntityLink[];
+  linksIn: EntityLink[];
+  paper: {
+    arxiv_id: string;
+    arxiv_version: number;
+    title: string;
+    abstract: string;
+    authors: string[];
+    categories: string[];
+    published_at: string;
+    updated_at: string;
+    ingested_at: string;
+  } | null;
+  library: {
+    paperpile_id: string;
+    title: string;
+    authors: string[];
+    pubtype: string;
+    year: number | null;
+    arxiv_id: string | null;
+    doi: string | null;
+    url: string | null;
+    journal: string | null;
+    folders: string[] | null;
+    added_at: string;
+  } | null;
+  verdicts: {
+    filter_name: string;
+    verdict: string;
+    confidence: number;
+    reason: string;
+    current: boolean;
+  }[];
+}
+
+export interface SearchResults {
+  papers: { entityId: string; arxivId: string; title: string; abstract: string }[];
+  other: { entityId: string; title: string; pubtype: string; arxivId: string | null }[];
+  people: { entityId: string; displayName: string }[];
+  orgs: { entityId: string; displayName: string }[];
+}
+
+export interface TableList {
+  tables: { name: string; rows: number }[];
+}
+
+export interface TablePage {
+  name: string;
+  columns: { name: string; type: string }[];
+  sort: string;
+  dir: "asc" | "desc";
+  offset: number;
+  total: number;
+  rows: Record<string, unknown>[];
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -86,35 +160,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+function post(path: string, body: unknown): Promise<unknown> {
+  return request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export const api = {
   state: (): Promise<AppState> => request("/api/state"),
   feed: (days: number): Promise<Feed> => request(`/api/feed?days=${days}`),
   results: (name: string): Promise<Results> =>
     request(`/api/results/${encodeURIComponent(name)}`),
-  saveFilter: (body: { name: string; prompt: string; model: string }): Promise<void> =>
-    request("/api/filters", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  runFilter: (name: string, days: number): Promise<{ jobId: string }> =>
-    request("/api/jobs/filter", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, days }),
-    }),
-  ingest: (days: number, categories: string[]): Promise<{ jobId: string }> =>
-    request("/api/jobs/ingest", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ days, categories }),
-    }),
-  ingestLabs: (): Promise<{ jobId: string }> =>
-    request("/api/jobs/labs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    }),
+  entity: (id: string): Promise<EntityPage> =>
+    request(`/api/entity/${encodeURIComponent(id)}`),
+  search: (q: string): Promise<SearchResults> =>
+    request(`/api/search?q=${encodeURIComponent(q)}`),
+  tables: (): Promise<TableList> => request("/api/tables"),
+  table: (
+    name: string,
+    opts: { sort?: string; dir?: "asc" | "desc"; offset?: number },
+  ): Promise<TablePage> => {
+    const params = new URLSearchParams();
+    if (opts.sort !== undefined) params.set("sort", opts.sort);
+    if (opts.dir !== undefined) params.set("dir", opts.dir);
+    if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+    return request(`/api/tables/${encodeURIComponent(name)}?${params}`);
+  },
+  saveFilter: (body: { name: string; prompt: string; model: string }): Promise<unknown> =>
+    post("/api/filters", body),
+  runFilter: (name: string, days: number): Promise<unknown> =>
+    post("/api/jobs/filter", { name, days }),
+  ingest: (days: number, categories: string[]): Promise<unknown> =>
+    post("/api/jobs/ingest", { days, categories }),
+  ingestLabs: (): Promise<unknown> => post("/api/jobs/labs", {}),
 };
 
 /** Must match promptHash() in userland/folds: sha256(model + "\n" + prompt), first 12 hex. */

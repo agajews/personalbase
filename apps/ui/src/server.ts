@@ -20,6 +20,7 @@ import {
   libraryFold,
   papersFold,
   paperRef,
+  personRef,
 } from "@nc/folds";
 
 // The UI reads folds and appends events / enqueues jobs. It never runs
@@ -113,20 +114,26 @@ app.get("/api/results/:name", async (c) => {
           where l.from_id = any(${[...paperIds.keys()]})
             and l.link_type in ('published_by', 'affiliated_org')
             and e.kind = 'org'`;
-  const orgsByArxivId = new Map<string, Set<string>>();
+  const orgsByArxivId = new Map<string, Map<string, string>>();
   for (const link of orgLinks) {
     const arxivId = paperIds.get(link["from_id"])!;
-    const set = orgsByArxivId.get(arxivId) ?? new Set<string>();
-    set.add(link["display_name"]);
-    orgsByArxivId.set(arxivId, set);
+    const map = orgsByArxivId.get(arxivId) ?? new Map<string, string>();
+    map.set(link["entity_id"], link["display_name"]);
+    orgsByArxivId.set(arxivId, map);
   }
   const shape = (r: (typeof rows)[number]) => ({
     arxivId: r["arxiv_id"],
+    entityId: entityId("paper", paperRef(r["arxiv_id"])),
     title: r["title"],
     abstract: r["abstract"],
     categories: r["categories"],
-    authors: r["authors"],
-    orgs: [...(orgsByArxivId.get(r["arxiv_id"]) ?? [])],
+    authors: (r["authors"] as string[]).map((name) => ({
+      name,
+      entityId: entityId("person", personRef(name)),
+    })),
+    orgs: [...(orgsByArxivId.get(r["arxiv_id"]) ?? new Map<string, string>())].map(
+      ([eid, name]) => ({ entityId: eid, name }),
+    ),
     confidence: Number(r["confidence"]),
     reason: r["reason"],
     updatedAt: r["updated_at"],
@@ -163,7 +170,7 @@ app.get("/api/feed", async (c) => {
     idToArxiv.size === 0
       ? []
       : await sql`
-          select l.from_id, e.display_name
+          select l.from_id, e.display_name, e.entity_id
           from links l
           join entities e on e.entity_id = l.to_id
           where l.from_id = any(${[...idToArxiv.keys()]})
@@ -171,10 +178,13 @@ app.get("/api/feed", async (c) => {
 
   const surfaced = new Map<
     string,
-    { matches: { filter: string; confidence: number; reason: string }[]; labs: string[] }
+    {
+      matches: { filter: string; confidence: number; reason: string }[];
+      labs: Map<string, string>;
+    }
   >();
   const entry = (arxivId: string) => {
-    const existing = surfaced.get(arxivId) ?? { matches: [], labs: [] };
+    const existing = surfaced.get(arxivId) ?? { matches: [], labs: new Map<string, string>() };
     surfaced.set(arxivId, existing);
     return existing;
   };
@@ -186,7 +196,7 @@ app.get("/api/feed", async (c) => {
     });
   }
   for (const l of labLinks) {
-    entry(idToArxiv.get(l["from_id"])!).labs.push(l["display_name"]);
+    entry(idToArxiv.get(l["from_id"])!).labs.set(l["entity_id"], l["display_name"]);
   }
   if (surfaced.size === 0) {
     return c.json({ days, items: [] });
@@ -199,13 +209,17 @@ app.get("/api/feed", async (c) => {
       const why = surfaced.get(p["arxiv_id"])!;
       return {
         arxivId: p["arxiv_id"],
+        entityId: entityId("paper", paperRef(p["arxiv_id"])),
         title: p["title"],
         abstract: p["abstract"],
-        authors: p["authors"],
+        authors: (p["authors"] as string[]).map((name) => ({
+          name,
+          entityId: entityId("person", personRef(name)),
+        })),
         categories: p["categories"],
         publishedAt: p["published_at"],
         updatedAt: p["updated_at"],
-        labs: [...new Set(why.labs)],
+        labs: [...why.labs].map(([eid, name]) => ({ entityId: eid, name })),
         matches: why.matches.sort((a, b) => b.confidence - a.confidence),
       };
     })
@@ -221,6 +235,168 @@ app.get("/api/feed", async (c) => {
       return score(b) - score(a);
     });
   return c.json({ days, items });
+});
+
+// ---- exploration: entity pages, search, raw tables ----
+
+app.get("/api/entity/:id", async (c) => {
+  const id = c.req.param("id");
+  const entityRows = await sql`
+    select entity_id, kind, display_name, created_seq from entities where entity_id = ${id}`;
+  const entity = entityRows[0];
+  if (entity === undefined) {
+    return c.json({ error: "no such entity" }, 404);
+  }
+  const linksOut = await sql`
+    select l.link_type, l.asserted_by, l.confidence, e.entity_id, e.kind, e.display_name
+    from links l join entities e on e.entity_id = l.to_id
+    where l.from_id = ${id} order by l.created_seq desc limit 500`;
+  const linksIn = await sql`
+    select l.link_type, l.asserted_by, l.confidence, e.entity_id, e.kind, e.display_name
+    from links l join entities e on e.entity_id = l.from_id
+    where l.to_id = ${id} order by l.created_seq desc limit 500`;
+  const identifiers = await sql`
+    select scheme, value from identifiers where entity_id = ${id} order by scheme`;
+  const paperRows = await sql`
+    select arxiv_id, arxiv_version, title, abstract, authors, categories,
+           published_at, updated_at, ingested_at
+    from papers where entity_id = ${id}`;
+  const libraryRows = await sql`
+    select paperpile_id, title, authors, pubtype, year, arxiv_id, doi, url,
+           journal, folders, added_at
+    from library_items where entity_id = ${id}`;
+  const paper = paperRows[0] ?? null;
+  const verdicts =
+    paper === null
+      ? []
+      : await sql`
+          select distinct on (r.filter_name)
+                 r.filter_name, r.verdict, r.confidence, r.reason,
+                 (f.prompt_hash = r.prompt_hash) as current
+          from filter_results r join filters f on f.name = r.filter_name
+          where r.arxiv_id = ${paper["arxiv_id"]}
+          order by r.filter_name, (f.prompt_hash = r.prompt_hash) desc, r.decided_seq desc`;
+  const shapeLink = (l: (typeof linksOut)[number]) => ({
+    linkType: l["link_type"],
+    assertedBy: l["asserted_by"],
+    confidence: Number(l["confidence"]),
+    other: { entityId: l["entity_id"], kind: l["kind"], displayName: l["display_name"] },
+  });
+  return c.json({
+    entity: {
+      entityId: entity["entity_id"],
+      kind: entity["kind"],
+      displayName: entity["display_name"],
+    },
+    identifiers,
+    linksOut: linksOut.map(shapeLink),
+    linksIn: linksIn.map(shapeLink),
+    paper,
+    library: libraryRows[0] ?? null,
+    verdicts,
+  });
+});
+
+app.get("/api/search", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (q === "") {
+    return c.json({ papers: [], people: [], orgs: [], other: [] });
+  }
+  // Scale is small enough for on-the-fly tsvectors; move to indexed columns
+  // in the folds when this measurably slows.
+  const papers = await sql`
+    select entity_id, arxiv_id, title, abstract from papers
+    where to_tsvector('english', title || ' ' || abstract)
+          @@ websearch_to_tsquery('english', ${q})
+    limit 25`;
+  const library = await sql`
+    select entity_id, title, pubtype, arxiv_id from library_items
+    where to_tsvector('english', title) @@ websearch_to_tsquery('english', ${q})
+    limit 25`;
+  const named = await sql`
+    select entity_id, kind, display_name from entities
+    where display_name ilike ${"%" + q + "%"} and kind in ('person', 'org')
+    order by kind, length(display_name) limit 40`;
+  const seen = new Set(papers.map((p) => p["entity_id"]));
+  return c.json({
+    papers: papers.map((p) => ({
+      entityId: p["entity_id"],
+      arxivId: p["arxiv_id"],
+      title: p["title"],
+      abstract: p["abstract"],
+    })),
+    other: library
+      .filter((l) => !seen.has(l["entity_id"]))
+      .map((l) => ({
+        entityId: l["entity_id"],
+        title: l["title"],
+        pubtype: l["pubtype"],
+        arxivId: l["arxiv_id"],
+      })),
+    people: named
+      .filter((e) => e["kind"] === "person")
+      .map((e) => ({ entityId: e["entity_id"], displayName: e["display_name"] })),
+    orgs: named
+      .filter((e) => e["kind"] === "org")
+      .map((e) => ({ entityId: e["entity_id"], displayName: e["display_name"] })),
+  });
+});
+
+async function tableNames(): Promise<string[]> {
+  const rows = await sql`
+    select tablename from pg_tables where schemaname = 'public' order by tablename`;
+  return rows.map((r) => r["tablename"]);
+}
+
+app.get("/api/tables", async (c) => {
+  const names = await tableNames();
+  const counts = await sql`
+    select relname, n_live_tup from pg_stat_user_tables where schemaname = 'public'`;
+  const byName = new Map(counts.map((r) => [r["relname"], Number(r["n_live_tup"])]));
+  return c.json({ tables: names.map((name) => ({ name, rows: byName.get(name) ?? 0 })) });
+});
+
+app.get("/api/tables/:name", async (c) => {
+  const name = c.req.param("name");
+  const names = await tableNames();
+  if (!names.includes(name)) {
+    return c.json({ error: `no table named ${name}` }, 404);
+  }
+  const columns = (
+    await sql`
+      select column_name, data_type from information_schema.columns
+      where table_schema = 'public' and table_name = ${name}
+      order by ordinal_position`
+  ).map((r) => ({ name: r["column_name"] as string, type: r["data_type"] as string }));
+  const sortParam = c.req.query("sort");
+  const dir = c.req.query("dir") === "asc" ? "asc" : "desc";
+  const sort =
+    sortParam !== undefined && columns.some((col) => col.name === sortParam)
+      ? sortParam
+      : columns[0]!.name;
+  const limit = Math.min(200, Math.max(1, Number(c.req.query("limit") ?? 50)));
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
+  // name, sort, and dir are validated against catalog values above.
+  const rows = await sql.unsafe(
+    `select * from "${name}" order by "${sort}" ${dir} nulls last limit ${limit} offset ${offset}`,
+  );
+  const total = await sql.unsafe(`select count(*)::int as n from "${name}"`);
+  return c.json({
+    name,
+    columns,
+    sort,
+    dir,
+    offset,
+    total: total[0]!["n"],
+    rows: rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [
+          k,
+          typeof v === "object" && v !== null && !(v instanceof Date) ? JSON.stringify(v) : v,
+        ]),
+      ),
+    ),
+  });
 });
 
 const filterBody = z.object({

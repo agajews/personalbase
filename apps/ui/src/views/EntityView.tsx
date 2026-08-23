@@ -1,0 +1,173 @@
+import { useEffect, useState } from "react";
+import { api, type EntityLink, type EntityPage } from "../api.js";
+import { ago } from "../ui.js";
+
+// One generic page for any entity: identity, kind-specific detail, and the
+// graph around it — every neighbor is a link to its own page.
+
+const linkTypeLabels: Record<string, { out: string; in: string }> = {
+  authored: { out: "wrote", in: "authors" },
+  affiliated_with: { out: "affiliated with", in: "affiliated people" },
+  affiliated_org: { out: "author affiliations", in: "papers with affiliated authors" },
+  published_by: { out: "published by", in: "publications" },
+};
+
+function LinkGroup({
+  title,
+  links,
+}: {
+  title: string;
+  links: EntityLink[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? links : links.slice(0, 12);
+  return (
+    <section className="link-group">
+      <div className="feed-date">
+        {title} ({links.length})
+      </div>
+      {shown.map((l) => (
+        <a
+          key={`${l.other.entityId}-${l.assertedBy}`}
+          className="link-row"
+          href={`#/entity/${l.other.entityId}`}
+        >
+          <span className="link-kind">{l.other.kind}</span>
+          <span className="link-name">{l.other.displayName ?? l.other.entityId}</span>
+          <span className="link-provenance">
+            {l.assertedBy}
+            {l.confidence < 1 ? ` · ${l.confidence.toFixed(2)}` : ""}
+          </span>
+        </a>
+      ))}
+      {links.length > shown.length && (
+        <button className="ghost" onClick={() => setExpanded(true)}>
+          show all {links.length}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function groupLinks(links: EntityLink[], direction: "out" | "in"): [string, EntityLink[]][] {
+  const groups = new Map<string, EntityLink[]>();
+  for (const link of links) {
+    const label = linkTypeLabels[link.linkType]?.[direction] ?? `${link.linkType} (${direction})`;
+    const group = groups.get(label) ?? [];
+    group.push(link);
+    groups.set(label, group);
+  }
+  return [...groups.entries()];
+}
+
+export function EntityView({ id }: { id: string }) {
+  const [page, setPage] = useState<EntityPage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPage(null);
+    setError(null);
+    api
+      .entity(id)
+      .then(setPage)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [id]);
+
+  if (error !== null) {
+    return <div className="error">{error}</div>;
+  }
+  if (page === null) {
+    return <div className="empty">loading…</div>;
+  }
+
+  const { entity, paper, library, verdicts } = page;
+  const dedupedLinks = (links: typeof page.linksOut) => {
+    const seen = new Set<string>();
+    return links.filter((l) => {
+      const key = `${l.linkType}|${l.other.entityId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  return (
+    <div className="entity-page">
+      <div className="entity-head">
+        <span className="entity-kind">{entity.kind}</span>
+        <h1>{entity.displayName ?? entity.entityId}</h1>
+      </div>
+      {page.identifiers.length > 0 && (
+        <p className="entity-idents">
+          {page.identifiers.map((i) => (
+            <span key={`${i.scheme}:${i.value}`} className="ident">
+              {i.scheme}: {i.value}
+            </span>
+          ))}
+        </p>
+      )}
+
+      {paper !== null && (
+        <section className="entity-detail">
+          <p className="verdict-authors">
+            {(paper.authors as string[]).join(", ")} · {paper.categories.join(", ")} ·{" "}
+            <a
+              className="arxiv-id"
+              href={`https://arxiv.org/abs/${paper.arxiv_id}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {paper.arxiv_id}v{paper.arxiv_version}
+            </a>
+          </p>
+          <p className="verdict-abstract">{paper.abstract}</p>
+          <p className="run-fact">
+            published {new Date(paper.published_at).toISOString().slice(0, 10)} · ingested{" "}
+            {ago(paper.ingested_at)}
+          </p>
+        </section>
+      )}
+
+      {library !== null && (
+        <section className="entity-detail">
+          <div className="feed-date">in your library</div>
+          <p className="run-fact">
+            added {new Date(library.added_at).toISOString().slice(0, 10)}
+            {library.year !== null ? ` · ${library.year}` : ""}
+            {library.journal !== null ? ` · ${library.journal}` : ""}
+            {library.folders !== null && library.folders.length > 0
+              ? ` · folders: ${library.folders.join(", ")}`
+              : ""}
+            {library.url !== null && (
+              <>
+                {" · "}
+                <a className="arxiv-id" href={library.url} target="_blank" rel="noreferrer">
+                  source
+                </a>
+              </>
+            )}
+          </p>
+        </section>
+      )}
+
+      {verdicts.length > 0 && (
+        <section className="entity-detail">
+          <div className="feed-date">filter verdicts</div>
+          {verdicts.map((v) => (
+            <p key={`${v.filter_name}-${v.current}`} className="run-fact">
+              {v.filter_name}: {v.verdict} ({Number(v.confidence).toFixed(2)})
+              {v.current ? "" : " — earlier prompt"} — {v.reason}
+            </p>
+          ))}
+        </section>
+      )}
+
+      {groupLinks(dedupedLinks(page.linksOut), "out").map(([label, links]) => (
+        <LinkGroup key={`out-${label}`} title={label} links={links} />
+      ))}
+      {groupLinks(dedupedLinks(page.linksIn), "in").map(([label, links]) => (
+        <LinkGroup key={`in-${label}`} title={label} links={links} />
+      ))}
+    </div>
+  );
+}

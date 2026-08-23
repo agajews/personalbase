@@ -1,0 +1,259 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  api,
+  previewHash,
+  type AppState,
+  type FilterSummary,
+  type Results,
+  type Verdict,
+} from "../api.js";
+import { ago, AuthorsLine, EntityChip, HashChip, hashHue } from "../ui.js";
+
+function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; open: boolean }) {
+  return (
+    <details className="verdict" open={open}>
+      <summary>
+        <span className="confidence" title={`confidence ${verdict.confidence.toFixed(2)}`}>
+          <span
+            className="confidence-fill"
+            style={{ width: `${verdict.confidence * 100}%`, background: `hsl(${hue} 45% 42%)` }}
+          />
+        </span>
+        <a
+          className="verdict-title"
+          href={`#/entity/${verdict.entityId}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {verdict.title}
+        </a>
+        {verdict.orgs.map((org) => (
+          <EntityChip key={org.entityId} entityId={org.entityId} name={org.name} className="org-chip" />
+        ))}
+        <a
+          className="arxiv-id"
+          href={`https://arxiv.org/abs/${verdict.arxivId}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {verdict.arxivId}
+        </a>
+      </summary>
+      <AuthorsLine authors={verdict.authors} />
+      <p className="verdict-reason">{verdict.reason}</p>
+      <p className="verdict-abstract">{verdict.abstract}</p>
+    </details>
+  );
+}
+
+const newFilter: FilterSummary = {
+  name: "",
+  model: "claude-opus-5",
+  prompt: "",
+  promptHash: "",
+  matches: 0,
+  rejects: 0,
+};
+
+export function FilterView({
+  name,
+  creating,
+  state,
+  refresh,
+  onSaved,
+  onError,
+}: {
+  name: string | null;
+  creating: boolean;
+  state: AppState;
+  refresh: () => Promise<void>;
+  onSaved: (name: string) => void;
+  onError: (message: string | null) => void;
+}) {
+  const filter = useMemo(
+    () => (creating ? newFilter : (state.filters.find((f) => f.name === name) ?? null)),
+    [state, name, creating],
+  );
+  const [results, setResults] = useState<Results | null>(null);
+  const [draft, setDraft] = useState({ name: "", model: "", prompt: "" });
+  const [nextHash, setNextHash] = useState("");
+  const [days, setDays] = useState(3);
+
+  useEffect(() => {
+    if (filter !== null) {
+      setDraft({ name: filter.name, model: filter.model, prompt: filter.prompt });
+    }
+  }, [filter?.name, filter?.promptHash]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void previewHash(draft.model, draft.prompt).then((h) => {
+      if (!cancelled) setNextHash(h);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.model, draft.prompt]);
+
+  useEffect(() => {
+    if (creating || name === null) {
+      setResults(null);
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const r = await api.results(name);
+        if (!cancelled) setResults(r);
+      } catch {
+        if (!cancelled) setResults(null);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [name, creating]);
+
+  const act = async (f: () => Promise<unknown>) => {
+    try {
+      await f();
+      onError(null);
+      await refresh();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  if (filter === null) {
+    return <div className="empty">No filters yet. Create one to start sifting the arXiv stream.</div>;
+  }
+
+  const draftChanged = nextHash !== "" && nextHash !== filter.promptHash;
+  const judging = state.jobs.some(
+    (j) => j.process === "reactor:paper-filter" && (creating ? false : j.payload["filter"] === name),
+  );
+  const hue = filter.promptHash !== "" ? hashHue(filter.promptHash) : 160;
+  const lastFilterRun = state.runs.find((r) => r.process === "reactor:paper-filter");
+
+  return (
+    <>
+      <section className="editor">
+        <div className="editor-head">
+          {creating ? (
+            <input
+              className="name-input"
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              placeholder="filter name"
+              autoFocus
+            />
+          ) : (
+            <h1>{filter.name}</h1>
+          )}
+          <input
+            className="model-input"
+            value={draft.model}
+            onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+            title="model"
+          />
+        </div>
+        <textarea
+          value={draft.prompt}
+          onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
+          placeholder="Describe what you want surfaced — the judge reads titles and abstracts against this."
+          rows={5}
+        />
+        <div className="editor-foot">
+          <span className="hash-line">
+            {!creating && filter.promptHash !== "" && (
+              <HashChip hash={filter.promptHash} label="current" />
+            )}
+            {(creating || draftChanged) && nextHash !== "" && (
+              <>
+                {!creating && <span className="mints">→</span>}
+                <HashChip hash={nextHash} label="mints" />
+              </>
+            )}
+          </span>
+          <button
+            className="primary"
+            disabled={draft.prompt === "" || (creating ? draft.name === "" : !draftChanged)}
+            onClick={() =>
+              void act(async () => {
+                await api.saveFilter(draft);
+                onSaved(draft.name);
+              })
+            }
+          >
+            Save prompt
+          </button>
+        </div>
+      </section>
+
+      {!creating && (
+        <section className="run-row">
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <option value={1}>last day</option>
+            <option value={3}>last 3 days</option>
+            <option value={7}>last 7 days</option>
+          </select>
+          <button
+            className="primary"
+            disabled={judging}
+            onClick={() => void act(() => api.runFilter(filter.name, days))}
+          >
+            {judging ? "Judging…" : "Judge papers"}
+          </button>
+          {judging && <span className="working">worker is on it</span>}
+          {!judging && lastFilterRun !== undefined && (
+            <span className="run-fact">
+              last run {ago(lastFilterRun.started_at)}
+              {lastFilterRun.status === "failed" ? ` — failed: ${lastFilterRun.error}` : ""}
+            </span>
+          )}
+        </section>
+      )}
+
+      {!creating && results !== null && (
+        <section className="results">
+          <div className="results-head">
+            <span className="results-count">
+              {results.matches.length} match{results.matches.length === 1 ? "" : "es"}
+            </span>
+            <span className="dot">·</span>
+            <span>{results.rejects.length} rejected</span>
+            <span className="dot">·</span>
+            <HashChip hash={results.promptHash} />
+          </div>
+          {results.matches.length === 0 && results.rejects.length === 0 ? (
+            <div className="empty">
+              No verdicts under this prompt yet — judge a date range to populate.
+            </div>
+          ) : (
+            <>
+              {results.matches.map((v) => (
+                <VerdictRow key={v.arxivId} verdict={v} hue={hue} open={true} />
+              ))}
+              {results.rejects.length > 0 && (
+                <details className="rejects">
+                  <summary>rejected ({results.rejects.length})</summary>
+                  {results.rejects.map((v) => (
+                    <VerdictRow key={v.arxivId} verdict={v} hue={hue} open={false} />
+                  ))}
+                </details>
+              )}
+            </>
+          )}
+        </section>
+      )}
+    </>
+  );
+}
