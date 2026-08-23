@@ -105,68 +105,68 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
   const seq = event.seq.toString();
   const at = event.occurredAt.toISOString();
   if (event.type === "user.devtask.created") {
-      const task = userDevtaskCreatedV1.parse(event.payload);
+    const task = userDevtaskCreatedV1.parse(event.payload);
+    await tx`
+      insert into dev_tasks (task_uid, title, spec, status, created_at, updated_seq)
+      values (${event.eventUid}, ${task.title}, ${task.spec}, 'queued', ${at}, ${seq})
+      on conflict (task_uid) do nothing`;
+    return;
+  }
+  if (event.type === "user.devmerge.requested") {
+    const request = userDevmergeRequestedV1.parse(event.payload);
+    await tx`
+      update dev_tasks set status = 'merging', updated_seq = ${seq}
+      where task_uid = ${request.taskUid}`;
+    return;
+  }
+  if (event.type === "dev.run.started") {
+    const run = devRunStartedV1.parse(event.payload);
+    await tx`
+      insert into dev_runs (run_uid, task_uid, kind, status, sandbox, branch, started_at)
+      values (${run.runUid}, ${run.taskUid}, ${run.kind}, 'running', ${run.sandbox},
+              ${run.branch}, ${at})
+      on conflict (run_uid) do nothing`;
+    if (run.kind === "feature") {
       await tx`
-        insert into dev_tasks (task_uid, title, spec, status, created_at, updated_seq)
-        values (${event.eventUid}, ${task.title}, ${task.spec}, 'queued', ${at}, ${seq})
-        on conflict (task_uid) do nothing`;
-      return;
+        update dev_tasks set status = 'running', updated_seq = ${seq}
+        where task_uid = ${run.taskUid}`;
     }
-    if (event.type === "user.devmerge.requested") {
-      const request = userDevmergeRequestedV1.parse(event.payload);
+    return;
+  }
+  if (event.type === "dev.pr.opened") {
+    const pr = devPrOpenedV1.parse(event.payload);
+    await tx`
+      update dev_runs
+      set pr_number = ${pr.prNumber}, pr_url = ${pr.prUrl}, pr_title = ${pr.title}
+      where run_uid = ${pr.runUid}`;
+    await tx`
+      update dev_tasks set status = 'pr_open', updated_seq = ${seq}
+      where task_uid = ${pr.taskUid}`;
+    return;
+  }
+  if (event.type === "dev.pr.merged") {
+    const merged = devPrMergedV1.parse(event.payload);
+    await tx`
+      update dev_runs set merged_sha = ${merged.mergedSha}
+      where run_uid = ${merged.runUid}`;
+    await tx`
+      update dev_tasks set status = 'merged', updated_seq = ${seq}
+      where task_uid = ${merged.taskUid}`;
+    return;
+  }
+  if (event.type === "dev.run.finished") {
+    const finished = devRunFinishedV1.parse(event.payload);
+    await tx`
+      update dev_runs
+      set status = ${finished.status}, summary = ${finished.summary},
+          error = ${finished.error}, finished_at = ${at}
+      where run_uid = ${finished.runUid}`;
+    if (finished.status === "failed") {
       await tx`
-        update dev_tasks set status = 'merging', updated_seq = ${seq}
-        where task_uid = ${request.taskUid}`;
-      return;
+        update dev_tasks set status = 'failed', updated_seq = ${seq}
+        where task_uid = ${finished.taskUid}`;
     }
-    if (event.type === "dev.run.started") {
-      const run = devRunStartedV1.parse(event.payload);
-      await tx`
-        insert into dev_runs (run_uid, task_uid, kind, status, sandbox, branch, started_at)
-        values (${run.runUid}, ${run.taskUid}, ${run.kind}, 'running', ${run.sandbox},
-                ${run.branch}, ${at})
-        on conflict (run_uid) do nothing`;
-      if (run.kind === "feature") {
-        await tx`
-          update dev_tasks set status = 'running', updated_seq = ${seq}
-          where task_uid = ${run.taskUid}`;
-      }
-      return;
-    }
-    if (event.type === "dev.pr.opened") {
-      const pr = devPrOpenedV1.parse(event.payload);
-      await tx`
-        update dev_runs
-        set pr_number = ${pr.prNumber}, pr_url = ${pr.prUrl}, pr_title = ${pr.title}
-        where run_uid = ${pr.runUid}`;
-      await tx`
-        update dev_tasks set status = 'pr_open', updated_seq = ${seq}
-        where task_uid = ${pr.taskUid}`;
-      return;
-    }
-    if (event.type === "dev.pr.merged") {
-      const merged = devPrMergedV1.parse(event.payload);
-      await tx`
-        update dev_runs set merged_sha = ${merged.mergedSha}
-        where run_uid = ${merged.runUid}`;
-      await tx`
-        update dev_tasks set status = 'merged', updated_seq = ${seq}
-        where task_uid = ${merged.taskUid}`;
-      return;
-    }
-    if (event.type === "dev.run.finished") {
-      const finished = devRunFinishedV1.parse(event.payload);
-      await tx`
-        update dev_runs
-        set status = ${finished.status}, summary = ${finished.summary},
-            error = ${finished.error}, finished_at = ${at}
-        where run_uid = ${finished.runUid}`;
-      if (finished.status === "failed") {
-        await tx`
-          update dev_tasks set status = 'failed', updated_seq = ${seq}
-          where task_uid = ${finished.taskUid}`;
-      }
-      return;
-    }
-    throw new Error(`dev fold received unexpected event type ${event.type}`);
+    return;
+  }
+  throw new Error(`dev fold received unexpected event type ${event.type}`);
 }

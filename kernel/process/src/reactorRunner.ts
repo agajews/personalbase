@@ -57,7 +57,8 @@ export async function runReactor(
   const usage = { tokensIn: 0, tokensOut: 0 };
   try {
     const result = await reactor.run(makeCtx(sql, reactor.name, usage), input);
-    const output: ReactorOutput = Array.isArray(result) ? { events: result } : result;
+    const output: ReactorOutput =
+      "events" in result ? result : { events: result };
     const stamped: NewEvent[] = output.events.map((e) => ({
       ...e,
       source: processKey,

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Reactor, ReactorEvent, ReactorResult } from "@nc/process";
 import { userDevtaskCreatedV1 } from "@nc/schema";
-import { devPollPayload, launchRun, pollRun } from "./harness.js";
+import { devPollPayload, finishedEvent, launchRun, pollRun } from "./harness.js";
 import type { SandboxProvider } from "./sandbox.js";
 import { spritesProvider } from "./sandbox.js";
 import {
@@ -47,13 +47,20 @@ export function makeDevAgentReactor(
     async run(_ctx, input): Promise<ReactorResult> {
       if (input.kind === "event") {
         const task = userDevtaskCreatedV1.parse(input.event.payload);
-        const cfg = config();
         const runUid = randomUUID();
+        const taskUid = input.event.eventUid;
+        let cfg: DevConfig;
+        try {
+          cfg = config();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return [finishedEvent({ taskUid, runUid }, "failed", null, message)];
+        }
         const branch = `agent/${branchSlug(task.title)}-${runUid.slice(0, 8)}`;
         return launchRun(provider, {
           reactorName: "dev-agent",
           kind: "feature",
-          taskUid: input.event.eventUid,
+          taskUid,
           runUid,
           branch,
           files: {

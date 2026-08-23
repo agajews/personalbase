@@ -52,7 +52,7 @@ function chunkEvent(
   };
 }
 
-function finishedEvent(
+export function finishedEvent(
   payload: Pick<DevPollPayload, "taskUid" | "runUid">,
   status: "succeeded" | "failed",
   summary: string | null,
@@ -70,15 +70,25 @@ function finishedEvent(
 
 /**
  * Creates the sandbox, starts the detached script, and returns the
- * dev.run.started event plus the first poll of the chain.
+ * dev.run.started event plus the first poll of the chain. A launch failure
+ * (missing secrets, sandbox API down) becomes a failed run rather than a
+ * throw: throwing from an event trigger would retry every daemon pass
+ * forever, since the checkpoint only advances on success.
  */
 export async function launchRun(
   provider: SandboxProvider,
   args: LaunchArgs,
 ): Promise<ReactorOutput> {
   const sandboxName = `nc-dev-${args.runUid.slice(0, 8)}`;
-  const sandbox = await provider.create(sandboxName);
-  await sandbox.start(args.files, args.env);
+  try {
+    const sandbox = await provider.create(sandboxName);
+    await sandbox.start(args.files, args.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      events: [finishedEvent(args, "failed", null, `sandbox launch failed: ${message}`)],
+    };
+  }
   const firstPoll: DevPollPayload = {
     step: "poll",
     kind: args.kind,

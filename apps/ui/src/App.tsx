@@ -8,6 +8,8 @@ import { SearchView } from "./views/SearchView.js";
 import { TablesView } from "./views/TablesView.js";
 import { MarkedView } from "./views/MarkedView.js";
 import { PapersView } from "./views/PapersView.js";
+import { AgentsView } from "./views/AgentsView.js";
+import { TaskView } from "./views/TaskView.js";
 
 type Route =
   | { kind: "feed" }
@@ -17,6 +19,8 @@ type Route =
   | { kind: "search"; q: string }
   | { kind: "marked"; mark: "saved" | "want_to_read" }
   | { kind: "papers"; category: string | null }
+  | { kind: "agents" }
+  | { kind: "task"; uid: string }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -40,6 +44,12 @@ function parseRoute(hash: string): Route {
         category:
           parts[1] !== undefined && parts[1] !== "" ? decodeURIComponent(parts[1]) : null,
       };
+    case "agents":
+      return { kind: "agents" };
+    case "task":
+      return parts[1] !== undefined && parts[1] !== ""
+        ? { kind: "task", uid: parts[1] }
+        : { kind: "agents" };
     case "saved":
       return { kind: "marked", mark: "saved" };
     case "want-to-read":
@@ -173,6 +183,12 @@ export function App() {
               <span className="match-count">{state?.papers.total ?? 0}</span>
             </span>
           </button>
+          <button
+            className={`filter-item ${route.kind === "agents" || route.kind === "task" ? "active" : ""}`}
+            onClick={() => navTo("/agents")}
+          >
+            <span className="filter-name">Agents</span>
+          </button>
 
           <div className="rail-label">Filters</div>
           <nav>
@@ -257,6 +273,8 @@ export function App() {
           {route.kind === "search" && <SearchView q={route.q} />}
           {route.kind === "marked" && <MarkedView mark={route.mark} />}
           {route.kind === "papers" && <PapersView category={route.category} />}
+          {route.kind === "agents" && <AgentsView />}
+          {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>
