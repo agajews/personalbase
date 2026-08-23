@@ -15,6 +15,8 @@ export {
   agentLinkAssertedV1,
   agentPaperAffiliationsExtractedV1,
   paperpileItemImportedV1,
+  userPaperMarkedV1,
+  type UserPaperMarked,
   type ArxivPaperIngested,
   type UserFilterDefined,
   type AgentPaperFiltered,

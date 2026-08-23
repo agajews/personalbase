@@ -1,4 +1,44 @@
 // Shared presentational bits and navigation helpers.
+import { api, type Mark } from "./api.js";
+
+/**
+ * Two-tier marking: none < saved < want_to_read. Clicking the active tier
+ * steps down one level.
+ */
+export function MarkButtons({
+  arxivId,
+  mark,
+  onChanged,
+}: {
+  arxivId: string;
+  mark: Mark | null;
+  onChanged: () => void;
+}) {
+  const saved = mark === "saved" || mark === "want_to_read";
+  const wtr = mark === "want_to_read";
+  const set = async (m: Mark | "none") => {
+    await api.mark(arxivId, m);
+    onChanged();
+  };
+  return (
+    <span className="mark-buttons" onClick={(e) => e.stopPropagation()}>
+      <button
+        className={`mark ${saved ? "on" : ""}`}
+        title={saved ? "unsave" : "save to library"}
+        onClick={() => void set(wtr ? "saved" : saved ? "none" : "saved")}
+      >
+        {saved ? "✓ saved" : "save"}
+      </button>
+      <button
+        className={`mark ${wtr ? "on" : ""}`}
+        title={wtr ? "back to saved" : "add to the read-in-depth shortlist"}
+        onClick={() => void set(wtr ? "saved" : "want_to_read")}
+      >
+        {wtr ? "★ want to read" : "want to read"}
+      </button>
+    </span>
+  );
+}
 
 export function hashHue(hash: string): number {
   return parseInt(hash.slice(0, 6), 16) % 360;

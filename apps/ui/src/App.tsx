@@ -6,6 +6,7 @@ import { FilterView } from "./views/FilterView.js";
 import { EntityView } from "./views/EntityView.js";
 import { SearchView } from "./views/SearchView.js";
 import { TablesView } from "./views/TablesView.js";
+import { MarkedView } from "./views/MarkedView.js";
 
 type Route =
   | { kind: "feed" }
@@ -13,6 +14,7 @@ type Route =
   | { kind: "filter-new" }
   | { kind: "entity"; id: string }
   | { kind: "search"; q: string }
+  | { kind: "marked"; mark: "saved" | "want_to_read" }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -30,6 +32,10 @@ function parseRoute(hash: string): Route {
         : { kind: "feed" };
     case "search":
       return { kind: "search", q: decodeURIComponent(parts.slice(1).join("/")) };
+    case "saved":
+      return { kind: "marked", mark: "saved" };
+    case "want-to-read":
+      return { kind: "marked", mark: "want_to_read" };
     case "tables":
       return { kind: "tables", table: parts[1] !== undefined && parts[1] !== "" ? parts[1] : null };
     default:
@@ -125,10 +131,30 @@ export function App() {
           </form>
 
           <button
-            className={`filter-item today ${route.kind === "feed" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "feed" ? "active" : ""}`}
             onClick={() => navTo("/")}
           >
             <span className="filter-name">Today</span>
+          </button>
+          <button
+            className={`filter-item ${route.kind === "marked" && route.mark === "want_to_read" ? "active" : ""}`}
+            onClick={() => navTo("/want-to-read")}
+          >
+            <span className="filter-name">Want to read</span>
+            <span className="filter-meta">
+              <span className="match-count">{state?.marks.wantToRead ?? 0}</span>
+            </span>
+          </button>
+          <button
+            className={`filter-item today ${route.kind === "marked" && route.mark === "saved" ? "active" : ""}`}
+            onClick={() => navTo("/saved")}
+          >
+            <span className="filter-name">Saved</span>
+            <span className="filter-meta">
+              <span className="match-count">
+                {(state?.marks.saved ?? 0) + (state?.marks.wantToRead ?? 0)}
+              </span>
+            </span>
           </button>
 
           <div className="rail-label">Filters</div>
@@ -212,6 +238,7 @@ export function App() {
           )}
           {route.kind === "entity" && <EntityView id={route.id} />}
           {route.kind === "search" && <SearchView q={route.q} />}
+          {route.kind === "marked" && <MarkedView mark={route.mark} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

@@ -86,6 +86,13 @@ export const paperpileItemImportedV1 = z.object({
 });
 export type PaperpileItemImported = z.infer<typeof paperpileItemImportedV1>;
 
+export const userPaperMarkedV1 = z.object({
+  arxivId: z.string().min(1),
+  /** Tiers: none < saved < want_to_read. Latest event per paper wins. */
+  mark: z.enum(["saved", "want_to_read", "none"]),
+});
+export type UserPaperMarked = z.infer<typeof userPaperMarkedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -96,4 +103,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
     versions: [{ schema: agentPaperAffiliationsExtractedV1 }],
   },
   { type: "paperpile.item.imported", versions: [{ schema: paperpileItemImportedV1 }] },
+  { type: "user.paper.marked", versions: [{ schema: userPaperMarkedV1 }] },
 ]);

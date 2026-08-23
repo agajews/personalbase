@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type EntityLink, type EntityPage } from "../api.js";
-import { ago } from "../ui.js";
+import { ago, MarkButtons } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -63,15 +63,17 @@ function groupLinks(links: EntityLink[], direction: "out" | "in"): [string, Enti
 export function EntityView({ id }: { id: string }) {
   const [page, setPage] = useState<EntityPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    setPage(null);
     setError(null);
     api
       .entity(id)
       .then(setPage)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [id]);
+  }, [id, tick]);
+
+  useEffect(() => setPage(null), [id]);
 
   if (error !== null) {
     return <div className="error">{error}</div>;
@@ -96,6 +98,13 @@ export function EntityView({ id }: { id: string }) {
       <div className="entity-head">
         <span className="entity-kind">{entity.kind}</span>
         <h1>{entity.displayName ?? entity.entityId}</h1>
+        {paper !== null && (
+          <MarkButtons
+            arxivId={paper.arxiv_id}
+            mark={page.mark}
+            onChanged={() => setTick((t) => t + 1)}
+          />
+        )}
       </div>
       {page.identifiers.length > 0 && (
         <p className="entity-idents">

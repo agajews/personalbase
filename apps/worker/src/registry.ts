@@ -4,6 +4,7 @@ import {
   filtersFold,
   graphFold,
   libraryFold,
+  marksFold,
   papersFold,
 } from "@nc/folds";
 import {
@@ -22,6 +23,7 @@ export const folds: readonly Fold[] = [
   filterResultsFold,
   graphFold,
   libraryFold,
+  marksFold,
 ];
 export const reactors: readonly Reactor[] = [
   arxivReactor,

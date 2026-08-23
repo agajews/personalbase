@@ -37,9 +37,22 @@ export interface TailRow {
 export interface AppState {
   filters: FilterSummary[];
   papers: { total: number; latest: string | null };
+  marks: { saved: number; wantToRead: number };
   jobs: JobRow[];
   runs: RunRow[];
   tail: TailRow[];
+}
+
+export type Mark = "saved" | "want_to_read";
+
+export interface MarkedItem {
+  entityId: string;
+  title: string | null;
+  kind: string;
+  mark: Mark;
+  markedAt: string;
+  arxivId: string | null;
+  authors: string[];
 }
 
 /** A clickable reference to an entity. */
@@ -51,6 +64,7 @@ export interface EntityRef {
 export interface Verdict {
   arxivId: string;
   entityId: string;
+  mark: Mark | null;
   title: string;
   abstract: string;
   categories: string[];
@@ -70,6 +84,7 @@ export interface Results {
 export interface FeedItem {
   arxivId: string;
   entityId: string;
+  mark: Mark | null;
   title: string;
   abstract: string;
   authors: EntityRef[];
@@ -94,6 +109,7 @@ export interface EntityLink {
 
 export interface EntityPage {
   entity: { entityId: string; kind: string; displayName: string | null };
+  mark: Mark | null;
   identifiers: { scheme: string; value: string }[];
   linksOut: EntityLink[];
   linksIn: EntityLink[];
@@ -195,6 +211,10 @@ export const api = {
   ingest: (days: number, categories: string[]): Promise<unknown> =>
     post("/api/jobs/ingest", { days, categories }),
   ingestLabs: (): Promise<unknown> => post("/api/jobs/labs", {}),
+  mark: (arxivId: string, mark: Mark | "none"): Promise<unknown> =>
+    post("/api/mark", { arxivId, mark }),
+  marked: (mark: Mark): Promise<{ mark: Mark; items: MarkedItem[] }> =>
+    request(`/api/marked/${mark}`),
 };
 
 /** Must match promptHash() in userland/folds: sha256(model + "\n" + prompt), first 12 hex. */

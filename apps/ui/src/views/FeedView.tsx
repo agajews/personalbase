@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem, type FilterSummary } from "../api.js";
-import { AuthorsLine, EntityChip, formatDay, hashHue } from "../ui.js";
+import { AuthorsLine, EntityChip, formatDay, hashHue, MarkButtons } from "../ui.js";
 
 function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
   const groups: [string, FeedItem[]][] = [];
@@ -16,11 +16,24 @@ function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
   return groups;
 }
 
-function FeedRow({ item, hueFor }: { item: FeedItem; hueFor: (filter: string) => number }) {
+function FeedRow({
+  item,
+  hueFor,
+  onMarked,
+}: {
+  item: FeedItem;
+  hueFor: (filter: string) => number;
+  onMarked: () => void;
+}) {
   const top = item.matches[0];
   return (
     <details className="verdict">
       <summary>
+        {item.mark !== null && (
+          <span className="mark-dot" title={item.mark}>
+            {item.mark === "want_to_read" ? "★" : "✓"}
+          </span>
+        )}
         <span
           className="confidence"
           title={top === undefined ? "surfaced by lab" : `confidence ${top.confidence.toFixed(2)}`}
@@ -64,12 +77,16 @@ function FeedRow({ item, hueFor }: { item: FeedItem; hueFor: (filter: string) =>
       <AuthorsLine authors={item.authors} />
       {top !== undefined && <p className="verdict-reason">{top.reason}</p>}
       <p className="verdict-abstract">{item.abstract}</p>
+      <p className="verdict-actions">
+        <MarkButtons arxivId={item.arxivId} mark={item.mark} onChanged={onMarked} />
+      </p>
     </details>
   );
 }
 
 export function FeedView({ filters }: { filters: FilterSummary[] }) {
   const [feed, setFeed] = useState<Feed | null>(null);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
@@ -91,7 +108,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [tick]);
 
   const hueFor = (name: string) =>
     hashHue(filters.find((f) => f.name === name)?.promptHash ?? "000000");
@@ -116,7 +133,12 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
           <div key={day}>
             <div className="feed-date">{formatDay(day)}</div>
             {items.map((item) => (
-              <FeedRow key={item.arxivId} item={item} hueFor={hueFor} />
+              <FeedRow
+                key={item.arxivId}
+                item={item}
+                hueFor={hueFor}
+                onMarked={() => setTick((t) => t + 1)}
+              />
             ))}
           </div>
         ))}

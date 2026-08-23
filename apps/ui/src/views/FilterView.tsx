@@ -7,12 +7,27 @@ import {
   type Results,
   type Verdict,
 } from "../api.js";
-import { ago, AuthorsLine, EntityChip, HashChip, hashHue } from "../ui.js";
+import { ago, AuthorsLine, EntityChip, HashChip, hashHue, MarkButtons } from "../ui.js";
 
-function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; open: boolean }) {
+function VerdictRow({
+  verdict,
+  hue,
+  open,
+  onMarked,
+}: {
+  verdict: Verdict;
+  hue: number;
+  open: boolean;
+  onMarked: () => void;
+}) {
   return (
     <details className="verdict" open={open}>
       <summary>
+        {verdict.mark !== null && (
+          <span className="mark-dot" title={verdict.mark}>
+            {verdict.mark === "want_to_read" ? "★" : "✓"}
+          </span>
+        )}
         <span className="confidence" title={`confidence ${verdict.confidence.toFixed(2)}`}>
           <span
             className="confidence-fill"
@@ -42,6 +57,9 @@ function VerdictRow({ verdict, hue, open }: { verdict: Verdict; hue: number; ope
       <AuthorsLine authors={verdict.authors} />
       <p className="verdict-reason">{verdict.reason}</p>
       <p className="verdict-abstract">{verdict.abstract}</p>
+      <p className="verdict-actions">
+        <MarkButtons arxivId={verdict.arxivId} mark={verdict.mark} onChanged={onMarked} />
+      </p>
     </details>
   );
 }
@@ -78,6 +96,7 @@ export function FilterView({
   const [draft, setDraft] = useState({ name: "", model: "", prompt: "" });
   const [nextHash, setNextHash] = useState("");
   const [days, setDays] = useState(3);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (filter !== null) {
@@ -120,7 +139,7 @@ export function FilterView({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [name, creating]);
+  }, [name, creating, tick]);
 
   const act = async (f: () => Promise<unknown>) => {
     try {
@@ -240,13 +259,25 @@ export function FilterView({
           ) : (
             <>
               {results.matches.map((v) => (
-                <VerdictRow key={v.arxivId} verdict={v} hue={hue} open={true} />
+                <VerdictRow
+                  key={v.arxivId}
+                  verdict={v}
+                  hue={hue}
+                  open={true}
+                  onMarked={() => setTick((t) => t + 1)}
+                />
               ))}
               {results.rejects.length > 0 && (
                 <details className="rejects">
                   <summary>rejected ({results.rejects.length})</summary>
                   {results.rejects.map((v) => (
-                    <VerdictRow key={v.arxivId} verdict={v} hue={hue} open={false} />
+                    <VerdictRow
+                      key={v.arxivId}
+                      verdict={v}
+                      hue={hue}
+                      open={false}
+                      onMarked={() => setTick((t) => t + 1)}
+                    />
                   ))}
                 </details>
               )}
