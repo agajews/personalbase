@@ -20,6 +20,7 @@ import {
   filtersFold,
   graphFold,
   libraryFold,
+  marksFold,
   papersFold,
   paperRef,
   personRef,
@@ -29,7 +30,7 @@ import {
 // reactors — the worker daemon (local or Fly) picks jobs up through the
 // database. Fold catch-up here is safe alongside the daemon because the fold
 // runner takes a per-fold advisory lock.
-const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold];
+const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold, marksFold];
 
 if (existsSync(".env")) {
   process.loadEnvFile(".env");
@@ -139,7 +140,13 @@ app.get("/api/state", async (c) => {
     from runs order by started_at desc limit 8`;
   const tail = await sql`
     select seq, type, source, occurred_at from events order by seq desc limit 10`;
+  const markCounts = await sql`
+    select mark, count(*)::int as n from paper_marks group by mark`;
   return c.json({
+    marks: {
+      saved: markCounts.find((m) => m["mark"] === "saved")?.["n"] ?? 0,
+      wantToRead: markCounts.find((m) => m["mark"] === "want_to_read")?.["n"] ?? 0,
+    },
     filters: filters.map((f) => ({
       name: f["name"],
       model: f["model"],
@@ -192,9 +199,16 @@ app.get("/api/results/:name", async (c) => {
     map.set(link["entity_id"], link["display_name"]);
     orgsByArxivId.set(arxivId, map);
   }
+  const markRows =
+    paperIds.size === 0
+      ? []
+      : await sql`
+          select entity_id, mark from paper_marks where entity_id = any(${[...paperIds.keys()]})`;
+  const markById = new Map(markRows.map((m) => [m["entity_id"], m["mark"]]));
   const shape = (r: (typeof rows)[number]) => ({
     arxivId: r["arxiv_id"],
     entityId: entityId("paper", paperRef(r["arxiv_id"])),
+    mark: markById.get(entityId("paper", paperRef(r["arxiv_id"]))) ?? null,
     title: r["title"],
     abstract: r["abstract"],
     categories: r["categories"],
@@ -275,12 +289,17 @@ app.get("/api/feed", async (c) => {
   const papers = await sql`
     select arxiv_id, title, abstract, authors, categories, published_at, updated_at
     from papers where arxiv_id = any(${[...surfaced.keys()]})`;
+  const feedMarkRows = await sql`
+    select entity_id, mark from paper_marks
+    where entity_id = any(${papers.map((p) => entityId("paper", paperRef(p["arxiv_id"])))})`;
+  const feedMarkById = new Map(feedMarkRows.map((m) => [m["entity_id"], m["mark"]]));
   const items = papers
     .map((p) => {
       const why = surfaced.get(p["arxiv_id"])!;
       return {
         arxivId: p["arxiv_id"],
         entityId: entityId("paper", paperRef(p["arxiv_id"])),
+        mark: feedMarkById.get(entityId("paper", paperRef(p["arxiv_id"]))) ?? null,
         title: p["title"],
         abstract: p["abstract"],
         authors: (p["authors"] as string[]).map((name) => ({
@@ -353,12 +372,14 @@ app.get("/api/entity/:id", async (c) => {
     confidence: Number(l["confidence"]),
     other: { entityId: l["entity_id"], kind: l["kind"], displayName: l["display_name"] },
   });
+  const markRow = await sql`select mark from paper_marks where entity_id = ${id}`;
   return c.json({
     entity: {
       entityId: entity["entity_id"],
       kind: entity["kind"],
       displayName: entity["display_name"],
     },
+    mark: markRow[0]?.["mark"] ?? null,
     identifiers,
     linksOut: linksOut.map(shapeLink),
     linksIn: linksIn.map(shapeLink),
@@ -521,6 +542,56 @@ app.post("/api/jobs/ingest", async (c) => {
       : { categories: body.categories }),
   });
   return c.json({ jobId });
+});
+
+const markBody = z.object({
+  arxivId: z.string().min(1),
+  mark: z.enum(["saved", "want_to_read", "none"]),
+});
+
+app.post("/api/mark", async (c) => {
+  const body = markBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.paper.marked",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  return c.json({ ok: true });
+});
+
+app.get("/api/marked/:mark", async (c) => {
+  const mark = c.req.param("mark");
+  if (mark !== "saved" && mark !== "want_to_read") {
+    return c.json({ error: `unknown mark ${mark}` }, 404);
+  }
+  // The saved view includes the want_to_read tier above it.
+  const marks = mark === "saved" ? ["saved", "want_to_read"] : ["want_to_read"];
+  const rows = await sql`
+    select m.entity_id, m.mark, m.marked_at, e.display_name, e.kind,
+           p.arxiv_id, p.authors
+    from paper_marks m
+    join entities e on e.entity_id = m.entity_id
+    left join papers p on p.entity_id = m.entity_id
+    where m.mark = any(${marks})
+    order by m.marked_at desc
+    limit 2000`;
+  return c.json({
+    mark,
+    items: rows.map((r) => ({
+      entityId: r["entity_id"],
+      title: r["display_name"],
+      kind: r["kind"],
+      mark: r["mark"],
+      markedAt: r["marked_at"],
+      arxivId: r["arxiv_id"],
+      authors: r["authors"] ?? [],
+    })),
+  });
 });
 
 const labsBody = z.object({ lab: z.string().optional() });

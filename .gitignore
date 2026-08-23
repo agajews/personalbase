@@ -4,3 +4,4 @@ node_modules/
 *.tsbuildinfo
 dist/
 experiments/**/*.mp3
+experiments/**/*.m4b
