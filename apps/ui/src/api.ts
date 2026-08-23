@@ -249,7 +249,61 @@ export const api = {
     post("/api/mark", { arxivId, mark }),
   marked: (mark: Mark): Promise<{ mark: Mark; items: MarkedItem[] }> =>
     request(`/api/marked/${mark}`),
+  devTasks: (): Promise<{ tasks: DevTaskListItem[] }> => request("/api/dev/tasks"),
+  devTask: (uid: string): Promise<DevTaskPage> =>
+    request(`/api/dev/tasks/${encodeURIComponent(uid)}`),
+  devTranscript: (runUid: string, after: number): Promise<{ chunks: TranscriptChunk[] }> =>
+    request(`/api/dev/runs/${encodeURIComponent(runUid)}/transcript?after=${after}`),
+  createDevTask: (title: string, spec: string): Promise<unknown> =>
+    post("/api/dev/tasks", { title, spec }),
+  requestMerge: (taskUid: string, prNumber: number): Promise<unknown> =>
+    post("/api/dev/merge", { taskUid, prNumber }),
 };
+
+export interface DevRunSummary {
+  runUid: string;
+  kind: "feature" | "merge";
+  status: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  summary: string | null;
+  error: string | null;
+}
+
+export interface DevTaskListItem {
+  taskUid: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  latestRun: DevRunSummary | null;
+}
+
+export interface DevRun {
+  runUid: string;
+  kind: "feature" | "merge";
+  status: string;
+  sandbox: string;
+  branch: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  prTitle: string | null;
+  mergedSha: string | null;
+  summary: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface DevTaskPage {
+  task: { taskUid: string; title: string; spec: string; status: string; createdAt: string };
+  runs: DevRun[];
+}
+
+export interface TranscriptChunk {
+  chunkSeq: number;
+  content: string;
+  at: string;
+}
 
 /** Must match promptHash() in userland/folds: sha256(model + "\n" + prompt), first 12 hex. */
 export async function previewHash(model: string, prompt: string): Promise<string> {

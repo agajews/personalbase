@@ -93,6 +93,70 @@ export const userPaperMarkedV1 = z.object({
 });
 export type UserPaperMarked = z.infer<typeof userPaperMarkedV1>;
 
+// ---- dev agents (background agents modifying this system's own code) ----
+
+export const userDevtaskCreatedV1 = z.object({
+  title: z.string().min(1).max(200),
+  /** The full prompt handed to the coding agent. */
+  spec: z.string().min(1),
+});
+export type UserDevtaskCreated = z.infer<typeof userDevtaskCreatedV1>;
+
+export const devRunStartedV1 = z.object({
+  /** event_uid of the user.devtask.created event this run works on. */
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  kind: z.enum(["feature", "merge"]),
+  /** Sandbox (Fly Sprite) name the run executes in. */
+  sandbox: z.string().min(1),
+  /** Feature runs work on a branch; merge runs operate on a PR. */
+  branch: z.string().nullable(),
+});
+export type DevRunStarted = z.infer<typeof devRunStartedV1>;
+
+export const devTranscriptAppendedV1 = z.object({
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  /** Dense from 0 per run; idempotency key dev:<runUid>:chunk:<chunkSeq>. */
+  chunkSeq: z.number().int().nonnegative(),
+  /** Raw log bytes: setup lines + Claude Code stream-json lines, interleaved. */
+  content: z.string(),
+});
+export type DevTranscriptAppended = z.infer<typeof devTranscriptAppendedV1>;
+
+export const devPrOpenedV1 = z.object({
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  prNumber: z.number().int().positive(),
+  prUrl: z.string().min(1),
+  branch: z.string().min(1),
+  title: z.string(),
+});
+export type DevPrOpened = z.infer<typeof devPrOpenedV1>;
+
+export const userDevmergeRequestedV1 = z.object({
+  taskUid: z.uuid(),
+  prNumber: z.number().int().positive(),
+});
+export type UserDevmergeRequested = z.infer<typeof userDevmergeRequestedV1>;
+
+export const devPrMergedV1 = z.object({
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  prNumber: z.number().int().positive(),
+  mergedSha: z.string().min(1),
+});
+export type DevPrMerged = z.infer<typeof devPrMergedV1>;
+
+export const devRunFinishedV1 = z.object({
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  status: z.enum(["succeeded", "failed"]),
+  summary: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type DevRunFinished = z.infer<typeof devRunFinishedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -104,4 +168,11 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   },
   { type: "paperpile.item.imported", versions: [{ schema: paperpileItemImportedV1 }] },
   { type: "user.paper.marked", versions: [{ schema: userPaperMarkedV1 }] },
+  { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
+  { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
+  { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },
+  { type: "dev.pr.opened", versions: [{ schema: devPrOpenedV1 }] },
+  { type: "user.devmerge.requested", versions: [{ schema: userDevmergeRequestedV1 }] },
+  { type: "dev.pr.merged", versions: [{ schema: devPrMergedV1 }] },
+  { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
 ]);

@@ -11,16 +11,27 @@ export interface ClaimedJob {
   readonly attempts: number;
 }
 
+export interface EnqueueOptions {
+  /** Seconds before the job becomes due (default 0). */
+  readonly runAfterSeconds?: number;
+  /** Unique key; an enqueue whose key already exists is dropped (returns null). */
+  readonly dedupeKey?: string;
+}
+
 export async function enqueueJob(
   sql: Sql,
   process: string,
   payload: unknown,
-): Promise<string> {
+  options: EnqueueOptions = {},
+): Promise<string | null> {
   const rows = await sql`
-    insert into jobs (process, payload)
-    values (${process}, ${jsonb(sql, payload)})
+    insert into jobs (process, payload, run_after, dedupe_key)
+    values (${process}, ${jsonb(sql, payload)},
+            now() + make_interval(secs => ${options.runAfterSeconds ?? 0}),
+            ${options.dedupeKey ?? null})
+    on conflict (dedupe_key) where dedupe_key is not null do nothing
     returning job_id`;
-  return rows[0]!["job_id"];
+  return rows[0]?.["job_id"] ?? null;
 }
 
 /** Claims one due pending job with FOR UPDATE SKIP LOCKED semantics. */

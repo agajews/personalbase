@@ -1,5 +1,6 @@
 import type { Fold, Reactor } from "@nc/process";
 import {
+  devFold,
   filterResultsFold,
   filtersFold,
   graphFold,
@@ -10,6 +11,8 @@ import {
 import {
   affiliationsReactor,
   arxivReactor,
+  devAgentReactor,
+  devMergeReactor,
   labPublicationsReactor,
   libraryArxivBackfillReactor,
   paperFilterReactor,
@@ -24,6 +27,7 @@ export const folds: readonly Fold[] = [
   graphFold,
   libraryFold,
   marksFold,
+  devFold,
 ];
 export const reactors: readonly Reactor[] = [
   arxivReactor,
@@ -32,4 +36,6 @@ export const reactors: readonly Reactor[] = [
   labPublicationsReactor,
   paperpileImportReactor,
   libraryArxivBackfillReactor,
+  devAgentReactor,
+  devMergeReactor,
 ];

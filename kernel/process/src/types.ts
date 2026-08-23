@@ -33,6 +33,31 @@ export type ReactorInput =
 /** What a reactor returns; the runner stamps source and sourceRunId. */
 export type ReactorEvent = Omit<NewEvent, "source" | "sourceRunId">;
 
+/**
+ * A job a reactor asks the runner to enqueue after its events are appended.
+ * This is how a reactor watching a long-lived external effect (a cloud
+ * sandbox, a slow remote job) schedules its own next look without holding the
+ * serial dispatcher: each run is quick and chains the next via a follow-up.
+ */
+export interface FollowUpJob {
+  readonly process: string;
+  readonly payload: unknown;
+  /** Seconds before the job becomes due (default 0). */
+  readonly runAfterSeconds?: number;
+  /**
+   * Unique key; a follow-up whose key already exists is dropped, so a
+   * retried reactor run cannot fork the job chain it is part of.
+   */
+  readonly dedupeKey?: string;
+}
+
+export interface ReactorOutput {
+  readonly events: readonly ReactorEvent[];
+  readonly followUps?: readonly FollowUpJob[];
+}
+
+export type ReactorResult = readonly ReactorEvent[] | ReactorOutput;
+
 export interface ReactorCtx {
   /** Read-only access to fold tables (by convention; reactors never write tables). */
   readonly sql: Sql;
@@ -52,7 +77,7 @@ export interface Reactor {
   readonly kind: "reactor";
   readonly name: string;
   readonly trigger: ReactorTrigger;
-  run(ctx: ReactorCtx, input: ReactorInput): Promise<ReactorEvent[]>;
+  run(ctx: ReactorCtx, input: ReactorInput): Promise<ReactorResult>;
 }
 
 export type Process = Fold | Reactor;

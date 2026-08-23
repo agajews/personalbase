@@ -49,3 +49,19 @@ export {
   libraryArxivBackfillReactor,
   makeLibraryArxivBackfillReactor,
 } from "./libraryBackfill.js";
+export {
+  devAgentReactor,
+  makeDevAgentReactor,
+} from "./devagents/devAgent.js";
+export {
+  devMergeReactor,
+  makeDevMergeReactor,
+} from "./devagents/devMerge.js";
+export { devPollPayload, type DevPollPayload } from "./devagents/harness.js";
+export {
+  spritesProvider,
+  type Sandbox,
+  type SandboxPoll,
+  type SandboxProvider,
+} from "./devagents/sandbox.js";
+export { devConfigFromEnv, type DevConfig } from "./devagents/scripts.js";

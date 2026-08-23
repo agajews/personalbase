@@ -1,7 +1,7 @@
 import { appendEvents, jsonb, readEvents, type NewEvent, type Sql } from "@nc/log";
 import type { SchemaRegistry } from "@nc/schema";
-import { claimJob, completeJob, failJob } from "./jobs.js";
-import type { Reactor, ReactorCtx, ReactorInput } from "./types.js";
+import { claimJob, completeJob, enqueueJob, failJob } from "./jobs.js";
+import type { Reactor, ReactorCtx, ReactorInput, ReactorOutput } from "./types.js";
 
 const eventBatchSize = 100;
 
@@ -56,19 +56,28 @@ export async function runReactor(
   const runId: string = rows[0]!["run_id"];
   const usage = { tokensIn: 0, tokensOut: 0 };
   try {
-    const emitted = await reactor.run(makeCtx(sql, reactor.name, usage), input);
-    const stamped: NewEvent[] = emitted.map((e) => ({
+    const result = await reactor.run(makeCtx(sql, reactor.name, usage), input);
+    const output: ReactorOutput = Array.isArray(result) ? { events: result } : result;
+    const stamped: NewEvent[] = output.events.map((e) => ({
       ...e,
       source: processKey,
       sourceRunId: runId,
     }));
     const appended = await appendEvents(sql, registry, stamped);
+    // Follow-ups go in only after the events they depend on are appended;
+    // dedupe keys make the retry of a crash between these two steps safe.
+    for (const followUp of output.followUps ?? []) {
+      await enqueueJob(sql, followUp.process, followUp.payload, {
+        runAfterSeconds: followUp.runAfterSeconds,
+        dedupeKey: followUp.dedupeKey,
+      });
+    }
     await sql`
       update runs
-      set finished_at = now(), status = 'done', emitted_count = ${emitted.length},
+      set finished_at = now(), status = 'done', emitted_count = ${output.events.length},
           tokens_in = ${usage.tokensIn}, tokens_out = ${usage.tokensOut}
       where run_id = ${runId}`;
-    return { runId, emitted: emitted.length, appended };
+    return { runId, emitted: output.events.length, appended };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await sql`

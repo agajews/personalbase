@@ -151,6 +151,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.110.0
         version: 0.110.0(zod@4.4.3)
+      '@fly/sprites':
+        specifier: ^0.2.0
+        version: 0.2.0
       '@nc/folds':
         specifier: workspace:*
         version: link:../folds
@@ -427,6 +430,12 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fly/sprites@0.2.0':
+    resolution: {integrity: sha512-P1q1mRc8K4Aibox8dvcoGAyK9J+ScWLOgzcvO+qFbHiVfbmDf+lWIXVO9XbAwzmfchOzvQ9XzUEczRErqYAM/g==}
+    engines: {node: '>=24.0.0'}
+    bundledDependencies:
+      - '@fly/client-signals'
 
   '@hono/node-server@1.19.17':
     resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
@@ -1229,6 +1238,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.2':
     optional: true
+
+  '@fly/sprites@0.2.0': {}
 
   '@hono/node-server@1.19.17(hono@4.13.3)':
     dependencies:

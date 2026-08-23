@@ -438,7 +438,46 @@ The kernel directory should stay small enough to read in one sitting; all growth
 5. **Operational state is not events.** Cursors, jobs, and runs in the log would bury facts under noise, make replay ambiguous (should it re-run jobs?), and couple the fact plane to infrastructure churn. Disposable operational tables preserve "replay = fold pure facts" forever; safe because every ingested event carries its source position in its idempotency key.
 6. **Two OS processes coordinating only through Postgres.** The launchd worker defines what "background" means (curricula at dawn, monitoring with the app closed) and homes OS-bound reactors (iMessage). The database as the only bus keeps the process boundary soft — reactors to a cloud VM, or a second device, by pointing at the same Neon URL, with zero protocol work.
 
-## 10. Phased roadmap
+## 10. Dev agents — the system that modifies itself
+
+From the UI: type a request, fire it off, keep working. Two task shapes come out of that box, and only one of them is new machinery:
+
+- **Data/research tasks** ("ingest the best NeurIPS papers") are ordinary reactors with web tools that emit ordinary events. Nothing below applies; that's just more userland.
+- **Code tasks** ("add a papers-by-org view") need a place to run Claude Code, a PR pipeline, and a merge/deploy lane. That's this section.
+
+### 10.1 The shape: detached sandbox + poll chain
+
+The worker's job dispatcher is deliberately serial, so a 30-minute agent session must not be one job. Instead the long-lived thing is a **detached process inside a cloud sandbox** (Fly Sprite), and the reactor is a **chain of quick jobs** that watch it:
+
+1. `user.devtask.created {title, spec}` (appended by the UI) triggers the `dev-agent` reactor. Its launch step creates a sprite, writes a run script (clone repo, branch off trunk, install, run `claude -p` headless with the spec, push, open a PR via `gh`, write `result.json`), starts it detached (`nohup … > run.log`), and returns `dev.run.started` plus a **follow-up job**: "poll this run in 10s".
+2. Each poll job reads the log tail from the sandbox, emits `dev.transcript.appended` chunks (idempotency key `dev:<run>:chunk:<n>`), and re-enqueues itself with the advanced cursor in the job payload — no state table, and each poll is a sub-second reactor run, so the serial dispatcher stays live for everything else.
+3. When the script exits, the final poll reads `result.json`, emits `dev.pr.opened` + `dev.run.finished`, and deletes the sprite (kept on failure, for inspection).
+
+Two small kernel extensions carry this: reactors may return `{ events, followUps }` (jobs enqueued only after the events append — the launch/poll chain), and `jobs` gains `run_after` exposure plus a nullable unique `dedupe_key` so a retried run can't fork the poll chain.
+
+**Transcripts are events.** A dev agent's transcript is the provenance of a code change to this very system — it passes the five-year litmus test the way an `agent.memo.created` does. Chunked `dev.transcript.appended` events (≤256KB per poll) keep the log append-only and the UI a plain fold-reader; if volume ever grates, the escape hatch is the blob store (§4.5) with pointer events, not a parallel side channel.
+
+### 10.2 The merge lane
+
+`user.devmerge.requested` (the UI's approve button — the same confirm-card stance as everything else) triggers the `dev-merge` reactor: same sandbox/poll harness, different script — checkout the PR, rebase onto trunk, typecheck, squash-merge, then `fly deploy` both apps from the merged trunk. It emits `dev.pr.merged` and `dev.run.finished`.
+
+Notes that matter:
+- **Serialized by construction**: merge runs go through the same serial dispatcher, so two approvals can't race a deploy.
+- **Self-update is safe**: the merge deploy restarts the very worker that babysits the merge run. The sandbox keeps running detached; the restarted daemon requeues `running` jobs and the poll chain resumes — all state lives in the database, none in the process.
+- **Human gate first**: nothing merges without a `user.devmerge.requested` event. Auto-merge later is one reactor-trigger change, not a redesign.
+- Trunk is configurable (`DEV_TRUNK`, currently `worktree-claude`); moving to a protected `main` is an ops decision, not a code change.
+
+### 10.3 Trust boundaries
+
+- Feature sandboxes get `GITHUB_TOKEN` (push + PR) and `ANTHROPIC_API_KEY`. Only the merge lane's sandbox gets Fly deploy tokens.
+- Sandboxes never get `DATABASE_URL`. Everything they produce enters the system through the reactor that polls them — the log's single append path, stamped with `source`/`sourceRunId`/`causedByUid` like any other reactor output.
+- Known v1 gap: the GitHub token is a broad personal token; a fine-grained per-repo PAT and branch protection on trunk are the follow-up.
+
+### 10.4 Events, fold, screens
+
+Events: `user.devtask.created`, `dev.run.started`, `dev.transcript.appended`, `dev.pr.opened`, `user.devmerge.requested`, `dev.pr.merged`, `dev.run.finished`. One `dev` fold owns `dev_tasks`, `dev_runs`, `dev_transcript_chunks`. UI: an **Agents** screen (task list + new-task form) and a **Task** screen (status, PR link, merge button, live transcript rendered from the stream-json lines) — both plain fold-readers polling like every other view.
+
+## 11. Phased roadmap
 
 Each milestone is a vertical slice shipping a usable loop; the M0 kernel carries the invariants, so nothing later gets rewritten.
 

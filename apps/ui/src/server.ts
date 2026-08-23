@@ -20,6 +20,7 @@ import {
   filtersFold,
   graphFold,
   libraryFold,
+  devFold,
   marksFold,
   papersFold,
   paperRef,
@@ -30,7 +31,7 @@ import {
 // reactors — the worker daemon (local or Fly) picks jobs up through the
 // database. Fold catch-up here is safe alongside the daemon because the fold
 // runner takes a per-fold advisory lock.
-const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold, marksFold];
+const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold, marksFold, devFold];
 
 if (existsSync(".env")) {
   process.loadEnvFile(".env");
@@ -671,6 +672,138 @@ app.get("/api/marked/:mark", async (c) => {
       authors: r["authors"] ?? [],
     })),
   });
+});
+
+// ---- dev agents ----
+
+app.get("/api/dev/tasks", async (c) => {
+  const tasks = await sql`
+    select t.task_uid, t.title, t.status, t.created_at,
+           r.run_uid, r.kind, r.status as run_status, r.pr_number, r.pr_url,
+           r.summary, r.error
+    from dev_tasks t
+    left join lateral (
+      select * from dev_runs where task_uid = t.task_uid
+      order by started_at desc limit 1
+    ) r on true
+    order by t.created_at desc
+    limit 200`;
+  return c.json({
+    tasks: tasks.map((t) => ({
+      taskUid: t["task_uid"],
+      title: t["title"],
+      status: t["status"],
+      createdAt: t["created_at"],
+      latestRun:
+        t["run_uid"] === null
+          ? null
+          : {
+              runUid: t["run_uid"],
+              kind: t["kind"],
+              status: t["run_status"],
+              prNumber: t["pr_number"],
+              prUrl: t["pr_url"],
+              summary: t["summary"],
+              error: t["error"],
+            },
+    })),
+  });
+});
+
+app.get("/api/dev/tasks/:uid", async (c) => {
+  const uid = c.req.param("uid");
+  const tasks = await sql`
+    select task_uid, title, spec, status, created_at from dev_tasks
+    where task_uid = ${uid}`;
+  const task = tasks[0];
+  if (task === undefined) {
+    return c.json({ error: "no such task" }, 404);
+  }
+  const runs = await sql`
+    select run_uid, kind, status, sandbox, branch, pr_number, pr_url, pr_title,
+           merged_sha, summary, error, started_at, finished_at
+    from dev_runs where task_uid = ${uid}
+    order by started_at`;
+  return c.json({
+    task: {
+      taskUid: task["task_uid"],
+      title: task["title"],
+      spec: task["spec"],
+      status: task["status"],
+      createdAt: task["created_at"],
+    },
+    runs: runs.map((r) => ({
+      runUid: r["run_uid"],
+      kind: r["kind"],
+      status: r["status"],
+      sandbox: r["sandbox"],
+      branch: r["branch"],
+      prNumber: r["pr_number"],
+      prUrl: r["pr_url"],
+      prTitle: r["pr_title"],
+      mergedSha: r["merged_sha"],
+      summary: r["summary"],
+      error: r["error"],
+      startedAt: r["started_at"],
+      finishedAt: r["finished_at"],
+    })),
+  });
+});
+
+app.get("/api/dev/runs/:uid/transcript", async (c) => {
+  const uid = c.req.param("uid");
+  const after = Number(c.req.query("after") ?? -1);
+  const chunks = await sql`
+    select chunk_seq, content, at from dev_transcript_chunks
+    where run_uid = ${uid} and chunk_seq > ${Number.isFinite(after) ? after : -1}
+    order by chunk_seq`;
+  return c.json({
+    chunks: chunks.map((r) => ({
+      chunkSeq: r["chunk_seq"],
+      content: r["content"],
+      at: r["at"],
+    })),
+  });
+});
+
+const devTaskBody = z.object({
+  title: z.string().min(1).max(200),
+  spec: z.string().min(1),
+});
+
+app.post("/api/dev/tasks", async (c) => {
+  const body = devTaskBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.devtask.created",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  return c.json({ ok: true });
+});
+
+const devMergeBody = z.object({
+  taskUid: z.uuid(),
+  prNumber: z.number().int().positive(),
+});
+
+app.post("/api/dev/merge", async (c) => {
+  const body = devMergeBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.devmerge.requested",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  return c.json({ ok: true });
 });
 
 const labsBody = z.object({ lab: z.string().optional() });
