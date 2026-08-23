@@ -68,7 +68,7 @@ export const anthropicSchemeFn: SchemeFn = async (titles) => {
   client ??= new Anthropic();
   const response = await client.messages.parse({
     model: "claude-opus-5",
-    max_tokens: 8000,
+    max_tokens: 16000,
     system: schemeSystem,
     messages: [
       { role: "user", content: titles.map((t, i) => `${i + 1}. ${t}`).join("\n") },
@@ -113,7 +113,7 @@ async function assignOnce(
   client ??= new Anthropic();
   const response = await client.messages.parse({
     model: "claude-opus-5",
-    max_tokens: 8000,
+    max_tokens: 16000,
     system: [{ type: "text", text: assignSystem(categories), cache_control: { type: "ephemeral" } }],
     messages: [
       {
