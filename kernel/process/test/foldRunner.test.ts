@@ -20,9 +20,11 @@ function makeCounterFold(version: number, multiplier: number): Fold {
       await tx`create table counter_total (id int primary key, total int not null)`;
       await tx`insert into counter_total values (1, 0)`;
     },
-    async apply(tx, event) {
-      const { by } = z.object({ by: z.number() }).parse(event.payload);
-      await tx`update counter_total set total = total + ${by * multiplier} where id = 1`;
+    async apply(tx, events) {
+      for (const event of events) {
+        const { by } = z.object({ by: z.number() }).parse(event.payload);
+        await tx`update counter_total set total = total + ${by * multiplier} where id = 1`;
+      }
     },
   };
 }

@@ -9,7 +9,9 @@ import type {
 /**
  * A fold is pure: it derives tables from events and may be truncated and
  * replayed at any time. Bumping `version` triggers an automatic rebuild from
- * seq 0. `apply` must be deterministic and must write only to `tables`.
+ * seq 0. `apply` receives a batch in seq order and must be deterministic and
+ * write only to `tables`; set-based writes (deduped in memory, one multi-row
+ * upsert per table) keep round trips per batch constant instead of per event.
  */
 export interface Fold {
   readonly kind: "fold";
@@ -18,7 +20,7 @@ export interface Fold {
   readonly consumes: readonly EventTypePattern[];
   readonly tables: readonly string[];
   init(tx: TransactionSql): Promise<void>;
-  apply(tx: TransactionSql, event: StoredEvent): Promise<void>;
+  apply(tx: TransactionSql, events: readonly StoredEvent[]): Promise<void>;
 }
 
 export type ReactorTrigger =

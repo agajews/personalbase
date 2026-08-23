@@ -98,9 +98,9 @@ export function EntityView({ id }: { id: string }) {
       <div className="entity-head">
         <span className="entity-kind">{entity.kind}</span>
         <h1>{entity.displayName ?? entity.entityId}</h1>
-        {paper !== null && (
+        {(entity.kind === "paper" || entity.kind === "resource") && (
           <MarkButtons
-            arxivId={paper.arxiv_id}
+            entityId={entity.entityId}
             mark={page.mark}
             onChanged={() => setTick((t) => t + 1)}
           />

@@ -8,6 +8,7 @@ import {
   userDevtaskCreatedV1,
 } from "@nc/schema";
 import type { Fold } from "@nc/process";
+import type { StoredEvent, TransactionSql } from "@nc/log";
 
 // Dev-agent tasks, their sandbox runs, and the transcripts those runs stream
 // back. Task status is a straight fold of the lifecycle events:
@@ -66,10 +67,44 @@ export const devFold: Fold = {
         primary key (run_uid, chunk_seq)
       )`;
   },
-  async apply(tx, event) {
-    const seq = event.seq.toString();
-    const at = event.occurredAt.toISOString();
-    if (event.type === "user.devtask.created") {
+  async apply(tx, events) {
+    // Transcript chunks are the only high-volume type: buffer them into one
+    // multi-row insert per batch. They live in their own table keyed
+    // (run_uid, chunk_seq), so their order relative to the row-per-event
+    // lifecycle updates below is immaterial. Everything else applies in seq
+    // order, one statement at a time — lifecycle events are rare.
+    const chunks: { runUid: string; chunkSeq: number; content: string; at: string }[] = [];
+    for (const event of events) {
+      if (event.type === "dev.transcript.appended") {
+        const chunk = devTranscriptAppendedV1.parse(event.payload);
+        chunks.push({
+          runUid: chunk.runUid,
+          chunkSeq: chunk.chunkSeq,
+          content: chunk.content,
+          at: event.occurredAt.toISOString(),
+        });
+        continue;
+      }
+      await applyOne(tx, event);
+    }
+    if (chunks.length > 0) {
+      await tx`
+        insert into dev_transcript_chunks (run_uid, chunk_seq, content, at)
+        select run_uid, chunk_seq, content, at from unnest(
+          ${chunks.map((c) => c.runUid)}::uuid[],
+          ${chunks.map((c) => c.chunkSeq)}::int[],
+          ${chunks.map((c) => c.content)}::text[],
+          ${chunks.map((c) => c.at)}::timestamptz[]
+        ) as t(run_uid, chunk_seq, content, at)
+        on conflict (run_uid, chunk_seq) do nothing`;
+    }
+  },
+};
+
+async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
+  const seq = event.seq.toString();
+  const at = event.occurredAt.toISOString();
+  if (event.type === "user.devtask.created") {
       const task = userDevtaskCreatedV1.parse(event.payload);
       await tx`
         insert into dev_tasks (task_uid, title, spec, status, created_at, updated_seq)
@@ -96,14 +131,6 @@ export const devFold: Fold = {
           update dev_tasks set status = 'running', updated_seq = ${seq}
           where task_uid = ${run.taskUid}`;
       }
-      return;
-    }
-    if (event.type === "dev.transcript.appended") {
-      const chunk = devTranscriptAppendedV1.parse(event.payload);
-      await tx`
-        insert into dev_transcript_chunks (run_uid, chunk_seq, content, at)
-        values (${chunk.runUid}, ${chunk.chunkSeq}, ${chunk.content}, ${at})
-        on conflict (run_uid, chunk_seq) do nothing`;
       return;
     }
     if (event.type === "dev.pr.opened") {
@@ -142,5 +169,4 @@ export const devFold: Fold = {
       return;
     }
     throw new Error(`dev fold received unexpected event type ${event.type}`);
-  },
-};
+}

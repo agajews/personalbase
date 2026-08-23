@@ -16,6 +16,7 @@ export {
   agentPaperAffiliationsExtractedV1,
   paperpileItemImportedV1,
   userPaperMarkedV1,
+  userPaperMarkedV2,
   userDevtaskCreatedV1,
   devRunStartedV1,
   devTranscriptAppendedV1,

@@ -5,14 +5,16 @@ import {
   paperpileItemImportedV1,
   type PaperpileItemImported,
 } from "@nc/schema";
-import { jsonb } from "@nc/log";
-import type { TransactionSql } from "@nc/log";
 import type { Fold } from "@nc/process";
+import type { StoredEvent } from "@nc/log";
 import { entityId } from "./ids.js";
 
 // The cross-domain graph: an entity registry, an identifier substrate, and
 // typed links with provenance. Entity ids are minted deterministically from
-// (kind, ref), so replay and independent producers converge.
+// (kind, ref), so replay and independent producers converge. Application is
+// set-based: each batch is folded into in-memory maps (with the same merge
+// rules the SQL upserts apply against existing rows), then written with one
+// multi-row upsert per table.
 
 function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, " ");
@@ -48,7 +50,7 @@ export function libraryItemEntity(
 ): { kind: string; ref: string } {
   const kind = scholarlyPubtypes.has(item.pubtype) ? "paper" : "resource";
   if (item.arxivId !== undefined) {
-    return { kind: "paper", ref: paperRef(item.arxivId) }; // paperRef normalizes versions
+    return { kind: "paper", ref: paperRef(item.arxivId) };
   }
   if (item.doi !== undefined) {
     return { kind, ref: `doi:${item.doi.toLowerCase()}` };
@@ -59,62 +61,175 @@ export function libraryItemEntity(
   return { kind, ref: `paperpile:${item.paperpileId}` };
 }
 
-async function ensureEntity(
-  tx: TransactionSql,
-  kind: string,
-  ref: string,
-  displayName: string | null,
-  seq: bigint,
-): Promise<string> {
-  const id = entityId(kind, ref);
-  // Shortest non-null display name wins: commutative, so the outcome is
-  // independent of event order (e.g. curated "Meta" beats the raw printed
-  // affiliation "Meta, Menlo Park, California, USA" whichever arrives first).
-  await tx`
-    insert into entities (entity_id, kind, canonical_id, display_name, created_seq)
-    values (${id}, ${kind}, ${id}, ${displayName}, ${seq.toString()})
-    on conflict (entity_id) do update
-      set display_name = case
-        when excluded.display_name is null then entities.display_name
-        when entities.display_name is null then excluded.display_name
-        when length(excluded.display_name) < length(entities.display_name)
-          then excluded.display_name
-        else entities.display_name
-      end`;
-  return id;
+interface EntityRow {
+  kind: string;
+  ref: string;
+  displayName: string | null;
+  seq: bigint;
 }
 
-async function ensureLink(
-  tx: TransactionSql,
-  args: {
-    fromId: string;
-    toId: string;
-    linkType: string;
-    assertedBy: string;
-    confidence: number;
-    evidence: unknown;
-    seq: bigint;
-  },
-): Promise<void> {
-  const linkId = entityId(
-    "link",
-    `${args.fromId}|${args.toId}|${args.linkType}|${args.assertedBy}`,
-  );
-  await tx`
-    insert into links (link_id, from_id, to_id, link_type, asserted_by,
-                       confidence, evidence, created_seq)
-    values (${linkId}, ${args.fromId}, ${args.toId}, ${args.linkType},
-            ${args.assertedBy}, ${args.confidence},
-            ${args.evidence === undefined ? null : jsonb(tx, args.evidence)},
-            ${args.seq.toString()})
-    on conflict (from_id, to_id, link_type, asserted_by) do update
-      set confidence = excluded.confidence, evidence = excluded.evidence`;
+interface LinkRow {
+  fromId: string;
+  toId: string;
+  linkType: string;
+  assertedBy: string;
+  confidence: number;
+  evidence: unknown;
+  seq: bigint;
+}
+
+interface IdentifierRow {
+  scheme: string;
+  value: string;
+  entityId: string;
+  assertedBy: string;
+}
+
+class Batch {
+  entities = new Map<string, EntityRow>();
+  links = new Map<string, LinkRow>();
+  identifiers = new Map<string, IdentifierRow>();
+
+  /** Shortest non-null display name wins — commutative, order-independent. */
+  entity(kind: string, ref: string, displayName: string | null, seq: bigint): string {
+    const id = entityId(kind, ref);
+    const prev = this.entities.get(id);
+    if (prev === undefined) {
+      this.entities.set(id, { kind, ref, displayName, seq });
+    } else if (
+      displayName !== null &&
+      (prev.displayName === null || displayName.length < prev.displayName.length)
+    ) {
+      prev.displayName = displayName;
+    }
+    return id;
+  }
+
+  link(row: LinkRow): void {
+    // Last assertion wins (matches the upsert's confidence/evidence update).
+    this.links.set(`${row.fromId}|${row.toId}|${row.linkType}|${row.assertedBy}`, row);
+  }
+
+  identifier(row: IdentifierRow): void {
+    // First wins (matches on conflict do nothing).
+    const key = `${row.scheme}|${row.value}`;
+    if (!this.identifiers.has(key)) {
+      this.identifiers.set(key, row);
+    }
+  }
+}
+
+function fold(batch: Batch, event: StoredEvent): void {
+  if (event.type === "arxiv.paper.ingested") {
+    const p = arxivPaperIngestedV1.parse(event.payload);
+    const paper = batch.entity("paper", paperRef(p.arxivId), p.title, event.seq);
+    for (const name of p.authors) {
+      const person = batch.entity("person", personRef(name), normalizeName(name), event.seq);
+      batch.link({
+        fromId: person,
+        toId: paper,
+        linkType: "authored",
+        assertedBy: event.source,
+        confidence: 1,
+        evidence: undefined,
+        seq: event.seq,
+      });
+    }
+    return;
+  }
+  if (event.type === "agent.link.asserted") {
+    const l = agentLinkAssertedV1.parse(event.payload);
+    const from = batch.entity(l.from.kind, l.from.ref, l.from.displayName ?? null, event.seq);
+    const to = batch.entity(l.to.kind, l.to.ref, l.to.displayName ?? null, event.seq);
+    batch.link({
+      fromId: from,
+      toId: to,
+      linkType: l.linkType,
+      assertedBy: event.source,
+      confidence: l.confidence,
+      evidence: l.evidence,
+      seq: event.seq,
+    });
+    return;
+  }
+  if (event.type === "paperpile.item.imported") {
+    const item = paperpileItemImportedV1.parse(event.payload);
+    const target = libraryItemEntity(item);
+    const entity = batch.entity(target.kind, target.ref, item.title, event.seq);
+    if (item.arxivId !== undefined) {
+      batch.identifier({
+        scheme: "arxiv_id",
+        value: normalizeArxivId(item.arxivId),
+        entityId: entity,
+        assertedBy: event.source,
+      });
+    }
+    if (item.doi !== undefined) {
+      batch.identifier({
+        scheme: "doi",
+        value: item.doi.toLowerCase(),
+        entityId: entity,
+        assertedBy: event.source,
+      });
+    }
+    for (const name of item.authors) {
+      const person = batch.entity("person", personRef(name), normalizeName(name), event.seq);
+      batch.link({
+        fromId: person,
+        toId: entity,
+        linkType: "authored",
+        assertedBy: event.source,
+        confidence: 1,
+        evidence: undefined,
+        seq: event.seq,
+      });
+    }
+    return;
+  }
+  if (event.type === "agent.paper.affiliations_extracted") {
+    const e = agentPaperAffiliationsExtractedV1.parse(event.payload);
+    const paper = batch.entity("paper", paperRef(e.arxivId), null, event.seq);
+    for (const author of e.authors) {
+      const person = batch.entity("person", personRef(author.name), normalizeName(author.name), event.seq);
+      if (author.email !== undefined) {
+        batch.identifier({
+          scheme: "email",
+          value: author.email.toLowerCase(),
+          entityId: person,
+          assertedBy: event.source,
+        });
+      }
+      for (const affiliation of author.affiliations) {
+        const org = batch.entity("org", affiliation.org, affiliation.raw, event.seq);
+        batch.link({
+          fromId: person,
+          toId: org,
+          linkType: "affiliated_with",
+          assertedBy: event.source,
+          confidence: 0.9,
+          evidence: { arxivId: e.arxivId, raw: affiliation.raw },
+          seq: event.seq,
+        });
+        batch.link({
+          fromId: paper,
+          toId: org,
+          linkType: "affiliated_org",
+          assertedBy: event.source,
+          confidence: 0.9,
+          evidence: { raw: affiliation.raw },
+          seq: event.seq,
+        });
+      }
+    }
+    return;
+  }
+  throw new Error(`graph fold received unexpected event type ${event.type}`);
 }
 
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 4,
+  version: 5, // batched apply; entities.ref column
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",
@@ -127,14 +242,15 @@ export const graphFold: Fold = {
       create table entities (
         entity_id    uuid primary key,
         kind         text not null,
-        canonical_id uuid not null,   -- self until merges exist
+        ref          text not null,     -- stable external ref the id was minted from
+        canonical_id uuid not null,     -- self until merges exist
         display_name text,
         created_seq  bigint not null
       )`;
     await tx`create index entities_kind on entities (kind)`;
     await tx`
       create table identifiers (
-        scheme      text not null,    -- 'email' | ...
+        scheme      text not null,
         value       text not null,
         entity_id   uuid not null,
         asserted_by text not null,
@@ -146,7 +262,7 @@ export const graphFold: Fold = {
         link_id     uuid primary key,
         from_id     uuid not null,
         to_id       uuid not null,
-        link_type   text not null,    -- 'authored' | 'published_by' | 'affiliated_with' | 'affiliated_org'
+        link_type   text not null,
         asserted_by text not null,
         confidence  real not null default 1.0,
         evidence    jsonb,
@@ -156,134 +272,63 @@ export const graphFold: Fold = {
     await tx`create index links_from on links (from_id, link_type)`;
     await tx`create index links_to on links (to_id, link_type)`;
   },
-  async apply(tx, event) {
-    if (event.type === "arxiv.paper.ingested") {
-      const p = arxivPaperIngestedV1.parse(event.payload);
-      const paper = await ensureEntity(tx, "paper", paperRef(p.arxivId), p.title, event.seq);
-      for (const name of p.authors) {
-        const person = await ensureEntity(
-          tx,
-          "person",
-          personRef(name),
-          normalizeName(name),
-          event.seq,
-        );
-        await ensureLink(tx, {
-          fromId: person,
-          toId: paper,
-          linkType: "authored",
-          assertedBy: event.source,
-          confidence: 1,
-          evidence: undefined,
-          seq: event.seq,
-        });
-      }
-      return;
+  async apply(tx, events) {
+    const batch = new Batch();
+    for (const event of events) {
+      fold(batch, event);
     }
-    if (event.type === "agent.link.asserted") {
-      const l = agentLinkAssertedV1.parse(event.payload);
-      const from = await ensureEntity(
-        tx,
-        l.from.kind,
-        l.from.ref,
-        l.from.displayName ?? null,
-        event.seq,
-      );
-      const to = await ensureEntity(tx, l.to.kind, l.to.ref, l.to.displayName ?? null, event.seq);
-      await ensureLink(tx, {
-        fromId: from,
-        toId: to,
-        linkType: l.linkType,
-        assertedBy: event.source,
-        confidence: l.confidence,
-        evidence: l.evidence,
-        seq: event.seq,
-      });
-      return;
+    const entities = [...batch.entities.entries()];
+    if (entities.length > 0) {
+      await tx`
+        insert into entities (entity_id, kind, ref, canonical_id, display_name, created_seq)
+        select id, kind, ref, id, display_name, seq from unnest(
+          ${entities.map(([id]) => id)}::uuid[],
+          ${entities.map(([, e]) => e.kind)}::text[],
+          ${entities.map(([, e]) => e.ref)}::text[],
+          ${entities.map(([, e]) => e.displayName)}::text[],
+          ${entities.map(([, e]) => e.seq.toString())}::bigint[]
+        ) as t(id, kind, ref, display_name, seq)
+        on conflict (entity_id) do update
+          set display_name = case
+            when excluded.display_name is null then entities.display_name
+            when entities.display_name is null then excluded.display_name
+            when length(excluded.display_name) < length(entities.display_name)
+              then excluded.display_name
+            else entities.display_name
+          end`;
     }
-    if (event.type === "paperpile.item.imported") {
-      const item = paperpileItemImportedV1.parse(event.payload);
-      const target = libraryItemEntity(item);
-      const entity = await ensureEntity(tx, target.kind, target.ref, item.title, event.seq);
-      if (item.arxivId !== undefined) {
-        await tx`
-          insert into identifiers (scheme, value, entity_id, asserted_by)
-          values ('arxiv_id', ${normalizeArxivId(item.arxivId)}, ${entity}, ${event.source})
-          on conflict (scheme, value) do nothing`;
-      }
-      if (item.doi !== undefined) {
-        await tx`
-          insert into identifiers (scheme, value, entity_id, asserted_by)
-          values ('doi', ${item.doi.toLowerCase()}, ${entity}, ${event.source})
-          on conflict (scheme, value) do nothing`;
-      }
-      for (const name of item.authors) {
-        const person = await ensureEntity(
-          tx,
-          "person",
-          personRef(name),
-          normalizeName(name),
-          event.seq,
-        );
-        await ensureLink(tx, {
-          fromId: person,
-          toId: entity,
-          linkType: "authored",
-          assertedBy: event.source,
-          confidence: 1,
-          evidence: undefined,
-          seq: event.seq,
-        });
-      }
-      return;
+    const identifiers = [...batch.identifiers.values()];
+    if (identifiers.length > 0) {
+      await tx`
+        insert into identifiers (scheme, value, entity_id, asserted_by)
+        select * from unnest(
+          ${identifiers.map((i) => i.scheme)}::text[],
+          ${identifiers.map((i) => i.value)}::text[],
+          ${identifiers.map((i) => i.entityId)}::uuid[],
+          ${identifiers.map((i) => i.assertedBy)}::text[]
+        )
+        on conflict (scheme, value) do nothing`;
     }
-    if (event.type === "agent.paper.affiliations_extracted") {
-      const e = agentPaperAffiliationsExtractedV1.parse(event.payload);
-      const paper = await ensureEntity(tx, "paper", paperRef(e.arxivId), null, event.seq);
-      for (const author of e.authors) {
-        const person = await ensureEntity(
-          tx,
-          "person",
-          personRef(author.name),
-          normalizeName(author.name),
-          event.seq,
-        );
-        if (author.email !== undefined) {
-          await tx`
-            insert into identifiers (scheme, value, entity_id, asserted_by)
-            values ('email', ${author.email.toLowerCase()}, ${person}, ${event.source})
-            on conflict (scheme, value) do nothing`;
-        }
-        for (const affiliation of author.affiliations) {
-          const org = await ensureEntity(
-            tx,
-            "org",
-            affiliation.org,
-            affiliation.raw,
-            event.seq,
-          );
-          await ensureLink(tx, {
-            fromId: person,
-            toId: org,
-            linkType: "affiliated_with",
-            assertedBy: event.source,
-            confidence: 0.9,
-            evidence: { arxivId: e.arxivId, raw: affiliation.raw },
-            seq: event.seq,
-          });
-          await ensureLink(tx, {
-            fromId: paper,
-            toId: org,
-            linkType: "affiliated_org",
-            assertedBy: event.source,
-            confidence: 0.9,
-            evidence: { raw: affiliation.raw },
-            seq: event.seq,
-          });
-        }
-      }
-      return;
+    const links = [...batch.links.values()];
+    if (links.length > 0) {
+      await tx`
+        insert into links (link_id, from_id, to_id, link_type, asserted_by,
+                           confidence, evidence, created_seq)
+        select link_id, from_id, to_id, link_type, asserted_by, confidence,
+               evidence::jsonb, seq
+        from unnest(
+          ${links.map((l) => entityId("link", `${l.fromId}|${l.toId}|${l.linkType}|${l.assertedBy}`))}::uuid[],
+          ${links.map((l) => l.fromId)}::uuid[],
+          ${links.map((l) => l.toId)}::uuid[],
+          ${links.map((l) => l.linkType)}::text[],
+          ${links.map((l) => l.assertedBy)}::text[],
+          ${links.map((l) => l.confidence)}::real[],
+          ${links.map((l) => (l.evidence === undefined ? null : JSON.stringify(l.evidence)))}::text[],
+          ${links.map((l) => l.seq.toString())}::bigint[]
+        ) as t(link_id, from_id, to_id, link_type, asserted_by, confidence,
+               evidence, seq)
+        on conflict (from_id, to_id, link_type, asserted_by) do update
+          set confidence = excluded.confidence, evidence = excluded.evidence`;
     }
-    throw new Error(`graph fold received unexpected event type ${event.type}`);
   },
 };

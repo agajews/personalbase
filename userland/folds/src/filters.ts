@@ -27,16 +27,19 @@ export const filtersFold: Fold = {
         defined_seq bigint not null
       )`;
   },
-  async apply(tx, event) {
-    const f = userFilterDefinedV1.parse(event.payload);
-    await tx`
-      insert into filters (name, prompt, model, prompt_hash, defined_seq)
-      values (${f.name}, ${f.prompt}, ${f.model}, ${promptHash(f.model, f.prompt)},
-              ${event.seq.toString()})
-      on conflict (name) do update set
-        prompt = excluded.prompt,
-        model = excluded.model,
-        prompt_hash = excluded.prompt_hash,
-        defined_seq = excluded.defined_seq`;
+  async apply(tx, events) {
+    // Filters are few; per-event upserts in seq order are fine here.
+    for (const event of events) {
+      const f = userFilterDefinedV1.parse(event.payload);
+      await tx`
+        insert into filters (name, prompt, model, prompt_hash, defined_seq)
+        values (${f.name}, ${f.prompt}, ${f.model}, ${promptHash(f.model, f.prompt)},
+                ${event.seq.toString()})
+        on conflict (name) do update set
+          prompt = excluded.prompt,
+          model = excluded.model,
+          prompt_hash = excluded.prompt_hash,
+          defined_seq = excluded.defined_seq`;
+    }
   },
 };

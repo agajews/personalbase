@@ -35,9 +35,13 @@ export const agentPaperFilteredV1 = z.object({
 export type AgentPaperFiltered = z.infer<typeof agentPaperFilteredV1>;
 
 /** A reference to an entity by kind + stable external ref; folds mint the id. */
-const entityRef = z.object({
-  kind: z.string().min(1),  // 'paper' | 'person' | 'org' | ...
-  ref: z.string().min(1),   // e.g. 'arxiv:2508.12345', 'anthropic'
+function entityRefSchema() {
+  return z.object({
+    kind: z.string().min(1), // 'paper' | 'person' | 'org' | ...
+    ref: z.string().min(1),  // e.g. 'arxiv:2508.12345', 'anthropic'
+  });
+}
+const entityRef = entityRefSchema().extend({
   displayName: z.string().optional(),
 });
 
@@ -91,7 +95,22 @@ export const userPaperMarkedV1 = z.object({
   /** Tiers: none < saved < want_to_read. Latest event per paper wins. */
   mark: z.enum(["saved", "want_to_read", "none"]),
 });
-export type UserPaperMarked = z.infer<typeof userPaperMarkedV1>;
+
+/** v2 marks any entity (papers, library resources) by its graph ref. */
+export const userPaperMarkedV2 = z.object({
+  target: entityRefSchema(),
+  mark: z.enum(["saved", "want_to_read", "none"]),
+});
+export type UserPaperMarked = z.infer<typeof userPaperMarkedV2>;
+
+function upcastMarkedV1(previous: unknown): unknown {
+  const v1 = userPaperMarkedV1.parse(previous);
+  // Same normalization as paperRef in the graph fold: identity is unversioned.
+  return {
+    target: { kind: "paper", ref: `arxiv:${v1.arxivId.replace(/v\d+$/, "")}` },
+    mark: v1.mark,
+  };
+}
 
 // ---- dev agents (background agents modifying this system's own code) ----
 
@@ -167,7 +186,13 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
     versions: [{ schema: agentPaperAffiliationsExtractedV1 }],
   },
   { type: "paperpile.item.imported", versions: [{ schema: paperpileItemImportedV1 }] },
-  { type: "user.paper.marked", versions: [{ schema: userPaperMarkedV1 }] },
+  {
+    type: "user.paper.marked",
+    versions: [
+      { schema: userPaperMarkedV1 },
+      { schema: userPaperMarkedV2, upcast: upcastMarkedV1 },
+    ],
+  },
   { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
   { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },

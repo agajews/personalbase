@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type AppState } from "./api.js";
-import { ago, HashChip, navTo } from "./ui.js";
+import { ago, BusyButton, HashChip, navTo } from "./ui.js";
 import { FeedView } from "./views/FeedView.js";
 import { FilterView } from "./views/FilterView.js";
 import { EntityView } from "./views/EntityView.js";
@@ -16,7 +16,7 @@ type Route =
   | { kind: "entity"; id: string }
   | { kind: "search"; q: string }
   | { kind: "marked"; mark: "saved" | "want_to_read" }
-  | { kind: "papers" }
+  | { kind: "papers"; category: string | null }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -35,7 +35,11 @@ function parseRoute(hash: string): Route {
     case "search":
       return { kind: "search", q: decodeURIComponent(parts.slice(1).join("/")) };
     case "papers":
-      return { kind: "papers" };
+      return {
+        kind: "papers",
+        category:
+          parts[1] !== undefined && parts[1] !== "" ? decodeURIComponent(parts[1]) : null,
+      };
     case "saved":
       return { kind: "marked", mark: "saved" };
     case "want-to-read":
@@ -208,9 +212,9 @@ export function App() {
                 placeholder="cs.LG, cs.CL — empty for all"
               />
             </label>
-            <button
+            <BusyButton
               onClick={() =>
-                void act(() =>
+                act(() =>
                   api.ingest(
                     ingestDays,
                     categories.split(",").map((c) => c.trim()).filter((c) => c !== ""),
@@ -219,13 +223,13 @@ export function App() {
               }
             >
               Ingest papers
-            </button>
-            <button
+            </BusyButton>
+            <BusyButton
               title="Read the publication pages of OpenAI, DeepMind, Anthropic, and Meta"
-              onClick={() => void act(() => api.ingestLabs())}
+              onClick={() => act(() => api.ingestLabs())}
             >
               Ingest lab publications
-            </button>
+            </BusyButton>
           </div>
 
           <div className="rail-label ingest-label">Database</div>
@@ -252,7 +256,7 @@ export function App() {
           {route.kind === "entity" && <EntityView id={route.id} />}
           {route.kind === "search" && <SearchView q={route.q} />}
           {route.kind === "marked" && <MarkedView mark={route.mark} />}
-          {route.kind === "papers" && <PapersView />}
+          {route.kind === "papers" && <PapersView category={route.category} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

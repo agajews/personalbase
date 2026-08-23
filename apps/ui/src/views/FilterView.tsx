@@ -7,7 +7,16 @@ import {
   type Results,
   type Verdict,
 } from "../api.js";
-import { ago, AuthorsLine, EntityChip, HashChip, hashHue, MarkButtons } from "../ui.js";
+import {
+  ago,
+  AuthorsLine,
+  BusyButton,
+  CategoryChips,
+  EntityChip,
+  HashChip,
+  hashHue,
+  MarkButtons,
+} from "../ui.js";
 
 function VerdictRow({
   verdict,
@@ -58,7 +67,8 @@ function VerdictRow({
       <p className="verdict-reason">{verdict.reason}</p>
       <p className="verdict-abstract">{verdict.abstract}</p>
       <p className="verdict-actions">
-        <MarkButtons arxivId={verdict.arxivId} mark={verdict.mark} onChanged={onMarked} />
+        <MarkButtons entityId={verdict.entityId} mark={verdict.mark} onChanged={onMarked} />
+        <CategoryChips categories={verdict.categories} />
       </p>
     </details>
   );
@@ -202,18 +212,18 @@ export function FilterView({
               </>
             )}
           </span>
-          <button
+          <BusyButton
             className="primary"
             disabled={draft.prompt === "" || (creating ? draft.name === "" : !draftChanged)}
             onClick={() =>
-              void act(async () => {
+              act(async () => {
                 await api.saveFilter(draft);
                 onSaved(draft.name);
               })
             }
           >
             Save prompt
-          </button>
+          </BusyButton>
         </div>
       </section>
 
@@ -224,13 +234,13 @@ export function FilterView({
             <option value={3}>last 3 days</option>
             <option value={7}>last 7 days</option>
           </select>
-          <button
+          <BusyButton
             className="primary"
             disabled={judging}
-            onClick={() => void act(() => api.runFilter(filter.name, days))}
+            onClick={() => act(() => api.runFilter(filter.name, days))}
           >
             {judging ? "Judging…" : "Judge papers"}
-          </button>
+          </BusyButton>
           {judging && <span className="working">worker is on it</span>}
           {!judging && lastFilterRun !== undefined && (
             <span className="run-fact">

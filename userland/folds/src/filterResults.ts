@@ -1,10 +1,10 @@
-import { agentPaperFilteredV1 } from "@nc/schema";
+import { agentPaperFilteredV1, type AgentPaperFiltered } from "@nc/schema";
 import type { Fold } from "@nc/process";
 
 export const filterResultsFold: Fold = {
   kind: "fold",
   name: "filter_results",
-  version: 1,
+  version: 2, // batched apply
   consumes: ["agent.paper.filtered"],
   tables: ["filter_results"],
   async init(tx) {
@@ -20,13 +20,26 @@ export const filterResultsFold: Fold = {
         primary key (filter_name, prompt_hash, arxiv_id)
       )`;
   },
-  async apply(tx, event) {
-    const r = agentPaperFilteredV1.parse(event.payload);
+  async apply(tx, events) {
+    // Last verdict per (filter, prompt, paper) wins, matching the upsert.
+    const byKey = new Map<string, { r: AgentPaperFiltered; seq: bigint }>();
+    for (const event of events) {
+      const r = agentPaperFilteredV1.parse(event.payload);
+      byKey.set(`${r.filterName}|${r.promptHash}|${r.arxivId}`, { r, seq: event.seq });
+    }
+    const rows = [...byKey.values()];
     await tx`
       insert into filter_results (filter_name, prompt_hash, arxiv_id, verdict,
                                   confidence, reason, decided_seq)
-      values (${r.filterName}, ${r.promptHash}, ${r.arxivId}, ${r.verdict},
-              ${r.confidence}, ${r.reason}, ${event.seq.toString()})
+      select * from unnest(
+        ${rows.map((x) => x.r.filterName)}::text[],
+        ${rows.map((x) => x.r.promptHash)}::text[],
+        ${rows.map((x) => x.r.arxivId)}::text[],
+        ${rows.map((x) => x.r.verdict)}::text[],
+        ${rows.map((x) => x.r.confidence)}::real[],
+        ${rows.map((x) => x.r.reason)}::text[],
+        ${rows.map((x) => x.seq.toString())}::bigint[]
+      )
       on conflict (filter_name, prompt_hash, arxiv_id) do update set
         verdict = excluded.verdict,
         confidence = excluded.confidence,

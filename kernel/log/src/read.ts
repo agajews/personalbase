@@ -18,14 +18,19 @@ export interface StoredEvent {
   readonly correctsUid: string | null;
 }
 
-function likeEscape(s: string): string {
-  return s.replace(/[\\%_]/g, (m) => "\\" + m);
-}
-
-export function patternToLike(pattern: EventTypePattern): string {
-  return pattern.endsWith(".*")
-    ? likeEscape(pattern.slice(0, -1)) + "%"
-    : likeEscape(pattern);
+/**
+ * Every stored event's type is validated against the registry at append time,
+ * so wildcard patterns can be expanded to the exact registered types — the
+ * query becomes `type = any(...)`, which always uses the (type, seq) index.
+ */
+export function expandPatterns(
+  registry: SchemaRegistry,
+  patterns: readonly EventTypePattern[],
+): string[] {
+  const types = [...registry.keys()];
+  return types.filter((type) =>
+    patterns.some((p) => (p.endsWith(".*") ? type.startsWith(p.slice(0, -1)) : type === p)),
+  );
 }
 
 /**
@@ -41,9 +46,12 @@ export async function readEvents(
     readonly limit: number;
   },
 ): Promise<StoredEvent[]> {
-  const likes = opts.patterns?.map(patternToLike);
+  const exact = opts.patterns === undefined ? undefined : expandPatterns(registry, opts.patterns);
+  if (exact !== undefined && exact.length === 0) {
+    return [];
+  }
   const afterSeq = opts.afterSeq.toString();
-  const rows = await (likes === undefined
+  const rows = await (exact === undefined
     ? sql`
         select seq, event_uid, type, schema_version, source, occurred_at,
                recorded_at, payload, caused_by_uid, corrects_uid
@@ -52,7 +60,7 @@ export async function readEvents(
     : sql`
         select seq, event_uid, type, schema_version, source, occurred_at,
                recorded_at, payload, caused_by_uid, corrects_uid
-        from events where seq > ${afterSeq} and type like any(${likes})
+        from events where seq > ${afterSeq} and type = any(${exact})
         order by seq limit ${opts.limit}`);
   return rows.map((row) => {
     const upcast = upcastToLatest(
