@@ -7,7 +7,7 @@ import { libraryItemEntity } from "./graph.js";
 export const libraryFold: Fold = {
   kind: "fold",
   name: "library",
-  version: 1,
+  version: 2,
   consumes: ["paperpile.item.imported"],
   tables: ["library_items"],
   async init(tx) {
@@ -16,6 +16,7 @@ export const libraryFold: Fold = {
         paperpile_id text primary key,
         entity_id    uuid not null,
         title        text not null,
+        abstract     text,
         authors      jsonb not null,
         pubtype      text not null,
         year         int,
@@ -34,10 +35,11 @@ export const libraryFold: Fold = {
     const item = paperpileItemImportedV1.parse(event.payload);
     const target = libraryItemEntity(item);
     await tx`
-      insert into library_items (paperpile_id, entity_id, title, authors, pubtype,
-                                 year, arxiv_id, doi, url, journal, folders,
+      insert into library_items (paperpile_id, entity_id, title, abstract, authors,
+                                 pubtype, year, arxiv_id, doi, url, journal, folders,
                                  added_at, imported_seq)
       values (${item.paperpileId}, ${entityId(target.kind, target.ref)}, ${item.title},
+              ${item.abstract ?? null},
               ${jsonb(tx, item.authors)}, ${item.pubtype}, ${item.year ?? null},
               ${item.arxivId ?? null}, ${item.doi?.toLowerCase() ?? null},
               ${item.url ?? null}, ${item.journal ?? null},
@@ -46,6 +48,7 @@ export const libraryFold: Fold = {
       on conflict (paperpile_id) do update set
         entity_id = excluded.entity_id,
         title = excluded.title,
+        abstract = excluded.abstract,
         authors = excluded.authors,
         pubtype = excluded.pubtype,
         year = excluded.year,

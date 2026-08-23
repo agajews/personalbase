@@ -311,7 +311,8 @@ app.get("/api/search", async (c) => {
     limit 25`;
   const library = await sql`
     select entity_id, title, pubtype, arxiv_id from library_items
-    where to_tsvector('english', title) @@ websearch_to_tsquery('english', ${q})
+    where to_tsvector('english', title || ' ' || coalesce(abstract, ''))
+          @@ websearch_to_tsquery('english', ${q})
     limit 25`;
   const named = await sql`
     select entity_id, kind, display_name from entities

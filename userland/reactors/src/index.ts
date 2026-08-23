@@ -45,3 +45,7 @@ export {
   paperpileItemToEvent,
   paperpileJobPayload,
 } from "./paperpileImport.js";
+export {
+  libraryArxivBackfillReactor,
+  makeLibraryArxivBackfillReactor,
+} from "./libraryBackfill.js";

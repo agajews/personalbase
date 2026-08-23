@@ -29,6 +29,7 @@ const usage = `usage: pnpm nc <command>
   ingest-labs [--lab openai|deepmind|anthropic|meta]
                                               ingest lab publication pages
   import-paperpile <path>                     import a Paperpile library JSON export
+  backfill-library                            fetch arXiv metadata for library papers
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
@@ -192,6 +193,23 @@ async function cmdImportPaperpile(args: string[]): Promise<void> {
   });
 }
 
+async function cmdBackfillLibrary(): Promise<void> {
+  await withDb(async (sql) => {
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "library-arxiv-backfill")!,
+      { kind: "job", payload: {} },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    const rows = await sql`select count(*)::int as n from papers`;
+    console.log(
+      `backfill: ${result.emitted} papers fetched, ${result.appended} new events; ` +
+        `papers table now has ${rows[0]!["n"]} rows`,
+    );
+  });
+}
+
 async function cmdRunFilter(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -324,6 +342,9 @@ switch (command) {
     break;
   case "import-paperpile":
     await cmdImportPaperpile(rest);
+    break;
+  case "backfill-library":
+    await cmdBackfillLibrary();
     break;
   case "run-filter":
     await cmdRunFilter(rest);

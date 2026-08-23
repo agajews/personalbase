@@ -10,6 +10,7 @@ import {
   affiliationsReactor,
   arxivReactor,
   labPublicationsReactor,
+  libraryArxivBackfillReactor,
   paperFilterReactor,
   paperpileImportReactor,
 } from "@nc/reactors";
@@ -28,4 +29,5 @@ export const reactors: readonly Reactor[] = [
   affiliationsReactor,
   labPublicationsReactor,
   paperpileImportReactor,
+  libraryArxivBackfillReactor,
 ];

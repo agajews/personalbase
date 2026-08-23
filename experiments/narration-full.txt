@@ -1,0 +1,714 @@
+Dynamic Chunking for End-to-End Hierarchical Sequence Modeling. By Sukjun Hwang, Brandon Wang, and Albert Gu. Published on arXiv in July 2025.
+
+Abstract.
+
+Major progress on language models (LMs) in recent years has largely resulted from moving away from specialized models designed for specific tasks,
+to general models based on powerful architectures (e.g. the Transformer) that learn everything from raw data.
+Despite this trend, pre-processing steps such as tokenization remain a barrier to true end-to-end foundation models.
+We introduce a collection of new techniques that enable a dynamic chunking mechanism which automatically learns content- and context- dependent segmentation strategies learned jointly with the rest of the model.
+Incorporating this into an explicit hierarchical network (H-Net) allows replacing the (implicitly hierarchical) tokenization–LM–detokenization pipeline with a single model learned fully end-to-end.
+When compute- and data- matched, an H-Net with one stage of hierarchy operating at the byte level outperforms a strong Transformer language model operating over BPE tokens.
+Iterating the hierarchy to multiple stages further increases its performance by modeling multiple levels of abstraction, demonstrating significantly better scaling with data and matching the token-based Transformer of twice its size.
+H-Nets pretrained on English show significantly increased character-level robustness, and qualitatively learn meaningful data-dependent chunking strategies without any heuristics or explicit supervision.
+Finally, the H-Net’s improvement over tokenized pipelines is further increased in languages and modalities with weaker tokenization heuristics, such as Chinese and code, or DNA sequences (nearly 4 times improvement in data efficiency over baselines),
+showing the potential of true end-to-end models that learn and scale better from unprocessed data.
+
+1 Introduction.
+
+ A broad goal of deep learning is to learn meaningful patterns from raw data, automatically extracting features and building abstractions in an end-to-end fashion.
+However, fixed-vocabulary tokenization, the process of compressing raw text into predefined chunks through algorithms such as byte-pair encoding (BPE) , remains a pervasive handcrafted preprocessing step in modern language models (LMs) .
+Tokenization comes with a host of well-documented drawbacks,
+from poor character-level understanding to lack of meaning and interpretability to degraded performance on complex languages and modalities .
+
+Replacing the tokenization–LM–detokenization pipeline with a single end-to-end model would also adhere better to the spirit of deep learning, ideally scaling more powerfully with data and parameters (c.f. the bitter lesson ) .
+However, tokenization remains an indispensable component of language models and other sequential data for its ability to compress and shorten sequences; as of yet, no end-to-end tokenizer-free model has matched the performance of tokenizer-based language models when matched for computational budget.
+
+ A line of recent works has turned to overcoming tokenization in autoregressive sequence models, which requires addressing a series of difficult technical challenges:
+
+ Direct byte-level language modeling with isotropic architectures can be improved with efficient sequence models such as MambaByte ,
+but still incur prohibitive computational costs while underperforming tokenized models in compute-matched settings.
+
+ To improve efficiency, hierarchical architectures such as Hourglass Transformer  and MegaByte  use small byte-level models to compress raw inputs into subsampled sequences, which are then processed with a more powerful standard language model. However, simple pooling strategies such as compressing every k inputs are not data-dependent, and perform poorly on modalities with variable information rates such as language.
+
+ SpaceByte  and Byte Latent Transformer  introduce data-dependent chunking strategies such as delimiter- or entropy-based heuristics. These heuristics, however, rely on auxiliary external boundary predictors, and are therefore modality-specific and not fully end-to-end.
+
+ Although jointly trainable boundary predictors are the ideal solution, they require optimizing discrete selection operations without supervision, which is fundamentally a challenging problem.
+Consequently, existing end-to-end approaches  exhibit training instabilities that preclude scaling beyond small models or nesting multi-level hierarchies.
+
+ Fundamentally, creating a tokenizer-free architecture requires incorporating the data chunking process directly into the model, while overcoming challenges in efficiency, learnability, and stability at scale.
+
+Dynamic Chunking: End-to-end Sequence Modeling Without Tokenization.
+
+ In this work, we introduce an end-to-end hierarchical network (H-Net) that compresses raw data through a recursive, data-dependent dynamic chunking (DC) process ( Figure   1 ).
+H-Nets match the efficiency of tokenized pipelines while substantially improving modeling ability,
+by replacing handcrafted heuristics with content-aware and context-dependent segmentation learned from data.
+
+Hierarchical Processing..
+
+ The H-Net adopts the hierarchical architecture from prior work , resembling an autoregressive U-Net : (i) raw data is processed by a small encoder network, (ii) then downsampled and passed through a main network operating on compressed chunks, (iii) and finally upsampled before being passed through a decoder network operating on the original resolution.
+This modularity creates a natural processing hierarchy where outer stages capture fine-grained patterns while inner stages operate on coarse representations akin to traditional tokens.
+Crucially, while the main network contains the bulk of parameters and can be any standard architecture designed for operating on tokenized language—such as a Transformer  or state space model (SSM)  —we show that the encoder and decoder networks are strongly improved by using SSMs, which have an inductive bias for compression .
+
+Dynamic Chunking..
+
+ H-Net’s core is a novel dynamic chunking (DC) mechanism which interfaces between the main network and the encoder/decoder networks, learning how to segment data while using standard differentiable optimization.
+DC is composed of two complementary new techniques: (i) a routing module which predicts boundaries between adjacent elements through a similarity score (ii) and a smoothing module which interpolates representations using the router’s outputs, attenuating the effect of uncertain boundaries and significantly improving learnability.
+By combining these with a new auxiliary loss function that targets desired downsampling ratios, and modern techniques for gradient-based learning of discrete choices ,
+DC lets an H-Net learn how to compress data in a fully end-to-end fashion.
+
+Signal Propagation..
+
+ We introduce several architectural and training techniques to improve stability and scalability during end-to-end optimization.
+These include: (i) carefully placing projections and normalization layers to balance signal propagation between interacting sub-networks, and (ii) adjusting optimization parameters for each layer based on its dimensionality and effective batch size, which changes between stages of the hierarchical structure.
+
+ Altogether, H-Net learns segmentation strategies optimized jointly with the main backbone, dynamically compressing input vectors based on contextual information into meaningful chunks.
+H-Net represents the first truly end-to-end, tokenizer-free language model:
+with a single stage of dynamic chunking, a byte-level H-Net matches the perplexity and downstream performance of a strong BPE-tokenized Transformer at sizes exceeding 1B parameters. Empirically, the dynamic chunking module naturally compresses data to a similar resolution as BPE tokenizers (4.5-5 bytes/chunk) and qualitatively learns meaningful boundaries, all without any external supervision or heuristics.
+
+Hierarchical Chunking: From Data to Abstractions.
+
+ Beyond addressing tokenization, H-Net improves general sequence modeling across a wide range of settings.
+Subword tokenization in language models is a special case of chunking ---the process of building higher-level abstractions from low-level data---and is a central component of intelligence.
+Crucially, because H-Net is fully end-to-end, it can be iterated recursively: the main network can itself be an H-Net.
+Intuitively, more stages of chunking represent higher order meanings; just as characters can be combined into words, words can be combined into clauses, sentences, and beyond.
+Iterating the hierarchy should therefore lead to even more efficient use of compute and parameters, and more effective reasoning over compressed representations.
+
+ Recursive H-Nets represent a new class of foundation model architectures that not only overcome tokenization, but discover and operate over abstractions learned from raw data, leading to higher-quality models with less pre-processing.
+Iterating the 1-stage H-Net to 2 hierarchical stages further improves its capabilities and strongly outperforms all baselines, with steeper training curves and better scaling with data.
+A byte-level 2-stage H-Net overtakes the perplexity of a strong tokenized Transformer after just 30B training bytes, with the gap widening throughout training, and matches the downstream evaluations of the tokenized Transformer of twice its size.
+
+ Finally, H-Nets realize the benefits of overcoming tokenization:
+
+ Robustness.
+Without special data mixes, the pretrained H-Net is dramatically more robust to textual perturbations than the token-based Transformer, as evaluated on the noisy HellaSwag suite of benchmarks.
+
+ Interpretability.
+Qualitative visualizations of learned boundaries reveal that H-Net automatically discovers semantically coherent units without explicit supervision, validating that end-to-end learning successfully detects the structural patterns traditionally imposed through handcrafted tokenization.
+
+ Other languages.
+H-Net’s improvements are even more pronounced on languages without obvious segmentation cues, including Chinese and code ( 59.9 to 66.3 on XWinograd-zh compared to tokenized Transformer) and DNA language modeling ( 3.6 times improved data efficiency compared to isotropic models).
+
+ We publicly release model code and pretrained checkpoints.
+
+2 H-Net Architecture.
+
+ H-Nets are defined as hierarchical U-Net-like networks, but with data-dependent dynamic subsampling that is learned end-to-end together with the rest of the model.
+We first introduce H-Net’s hierarchical architecture for multi-level processing, establishing key design principles ( Section   2.1 ).
+We then present our dynamic chunking mechanism that learns content-aware compression through standard optimization ( Section   2.2 ).
+Next, we detail architectural and optimization enhancements specifically tailored for hierarchical sequence modeling ( Section   2.3 ).
+Finally, we explain how H-Net preserves autoregressive properties throughout its hierarchical structure during both training and inference ( Section   2.4 ).
+
+2.1 Architectural Overview.
+
+2.1.1 Components of H-Net.
+
+ H-Net employs a hierarchical architecture comprising three primary components – encoder networks ( E ), main network ( M ), and decoder networks ( D ) – where each component is implemented with a stack of sequence mixing layers ( e.g., Transformers or state space models).
+In its simplest form, a single-stage H-Net consists of one encoder network, one main network, and one decoder network.
+Crucially, the architecture’s key characteristic lies in the main network’s unique property: it can itself be instantiated as a complete H-Net, enabling recursive construction of multi-level hierarchies.
+
+ This recursive design allows H-Net to scale to arbitrary depths.
+In an S -stage model, we denote components at each stage using superscripts: encoder networks as E s and decoder networks as D s for stages 0 at most s<S, with the main network M residing only at the final stage s=S.
+For example, a two-stage model contains E 0, E 1, M, D 1, and D 0, as illustrated in Figure   1 -(Left).
+Throughout this paper, we use superscripts to denote stage indices, though we omit them when all variables within an equation belong to the same stage.
+
+ Drawing inspiration from the U-Net architecture , H-Net progressively compresses input sequences into fewer vectors with richer semantic embeddings through a chunking layer, processes these representations in the main network, then decompresses the sequence back to its original resolution using a dechunking layer.
+Unlike traditional U-Net designs, however, H-Net dynamically determines chunking boundaries rather than using fixed-size pooling operations.
+The overall pipeline can be formalized as:
+
+ — see the equation in the paper —
+
+ where the chunking layer and the dechunking layer operations are defined as:
+
+ — see the equation in the paper —
+
+ — see the equation in the paper —
+
+ The initial input to the model is (expression) where L 0 is the input sequence length and D 0 is the embedding dimension.
+Intuitively, (expression) represents the chunking router’s confidence that the token should be passed into the main stage.
+
+This value is essential for both the chunk ( Section   2.2.1 ) and dechunk operations ( Section   2.2.2 ).
+
+2.1.2 Design Principles.
+
+Encoder and Decoder Networks..
+
+ The encoder and decoder networks in H-Net face unique design constraints due to their dual objectives and computational requirements.
+Each encoder must simultaneously (i) preserve fine-grained information for transmission to its corresponding decoder through residual connections ( 3 ), and (ii) compress inputs into chunks of richer representations for the main network.
+The decoder, in turn, must effectively combine coarse-grained representations from the main network with fine-grained details from the encoder residuals.
+
+ Importantly, both encoders and decoders operate on uncompressed sequences, making computational efficiency a significant design constraint that shapes our architectural choices.
+Recent studies demonstrate that state space models (SSMs)  excel at processing fine-grained data including audio , DNA sequences , and robotic control signals .
+
+ Based on these insights, we employ Mamba-2 layers  as the primary building blocks for the encoder and decoder networks.
+This choice yields two significant benefits: effective handling of fine-grained inputs, and substantially improved efficiency when processing long, uncompressed sequences.
+Our ablation studies ( Section   3.3 ) confirm that SSM-based encoders/decoders significantly outperform Transformer layers,
+not just at the byte level but even on coarser inputs, which we attribute to their stronger inductive bias for compression which helps build abstractions .
+
+Main Network..
+
+ H-Net’s computational efficiency stems from strategic parameter allocation.
+We concentrate the majority of model capacity in the main network, which operates on progressively compressed sequences.
+After S stages of compression, the main network receives sequences where (expression), enabling much larger networks within the same computational budget.
+This design reflects two key principles: (i) compressed sequences allow more parameters and compute per chunk, and (ii) higher-level abstractions benefit from increased processing power.
+
+ The main network functions as a standard language model and can employ any sequence mixing architecture.
+We default to Transformer layers for two reasons: compressed representations align well with Transformers’ strengths in processing discrete, semantically-rich tokens, and this choice enables more controlled comparison with traditional BPE-based Transformer baselines in our experiments.
+However, the modular design also allows straightforward substitution with alternative architectures ( e.g., a state space model, hybrid, or H-Net itself) as explored in our ablations.
+
+Architectural Guidelines..
+
+ Compared to standard isotropic models, the H-Net’s structure introduces several new dimensions of architectural parameters to balance the parameter/compute allocation to each network.
+To simplify the search space, we follow a few general guidelines.
+
+ First, we ensure the model width (often referred to as d model for isotropic architectures) is monotone in the hierarchy: D 0 at most D 1 at most... at most D S.
+This allows increasing compute and parameters used in the main network without significantly increasing its depth.
+
+ Second, using efficient and powerful SSM layers in the outer networks allow reducing the number of layers used compared to similar prior architectures that only used Transformer layers ;
+in this paper, we always stick to four layers (or the equivalent of four Mamba layers) in each encoder/decoder network.
+
+ To handle the changes in dimensions without an additional linear layer, we adopt the technique used in SpaceByte  with the marginal change: to expand dimensions ( i.e., D s to D s+1 ), we append all vectors with a shared trainable vector of dimension D s+1-D s; to reduce dimensions ( i.e., D s+1 to D s ), we take the first D s dimensions from each vector.
+
+ We note that H-Net’s performance can likely be improved with more careful tuning of the layer allocation and hyperparameters between sub-networks.
+
+2.2 Dynamic Chunking (DC).
+
+ H-Net learns chunking boundaries through end-to-end training, allowing it to identify semantically meaningful units adaptively.
+Furthermore, this dynamic approach enables the model to allocate computational resources efficiently by compressing low-information regions while preserving high-information content at appropriate granularity.
+
+2.2.1 Chunking Layer.
+
+ The chunking layer ( Chunk in equation ( 2 )) contains a routing module and downsampler, as illustrated in Figure   1 -( bottom-right ).
+
+Routing Module..
+
+ In natural data, meaningful boundaries tend to emerge at points of contextual or semantic shift.
+From this observation, we add an inductive bias by measuring the similarity between adjacent representations: when context changes, consecutive vectors should exhibit lower similarity.
+The routing module implements this intuition through cosine similarity between adjacent encoder outputs.
+Given encoder outputs (expression), it calculates boundary probabilities p t and boundary indicators b t as follows:
+
+ — see the equation in the paper —
+ where p 1=1.0 by definition, ensuring the sequence begins with a boundary.
+This formulation scales cosine similarity into a boundary score or probability: ideally, when consecutive vectors (expression) and (expression) span a semantic boundary ( e.g., between morphemes, words, or phrases), their projections q t and k t-1 diverge in the latent space, yielding low cosine similarity and consequently high boundary probability p t.
+
+Downsampler..
+
+ The downsampler compresses encoder outputs (expression) into a reduced set of vectors x s+1 using boundary indicators (expression).
+Among potential compression strategies – including mean pooling, max pooling, or cross-attention – we adopt direct selection of boundary-marked vectors for its simplicity and effectiveness (see Section   E.1 for ablations).
+
+ As illustrated in Figure   1 -(b), this approach follows a straightforward selection rule: vectors where b t=1 are retained in the compressed sequence x s+1, while those where b t=0 are discarded.
+Likewise, the same downsampler applies to boundary probabilities, compressing p s into P s+1 for use in a dechunking layer (see Section   2.2.2 ).
+
+2.2.2 Dechunking.
+
+ The dechunking layer ( Dechunk in equation ( 3 )) consists of a smoothing module and upsampler, as illustrated in Figure   1 -( top-right ).
+
+Smoothing Module..
+
+ The critical challenge in training a dynamic chunking module lies in the discrete nature of chunk boundaries, which impedes gradient flow during backpropagation.
+We introduce the smoothing module as a technique to address this problem.
+As illustrated in Figure   1 -(c), this component transforms discrete chunking operations into differentiable computations by creating smooth interpolations between chunks.
+Concretely, the smoothing module applies an exponential moving average (EMA) with the following definition:
+
+ — see the equation in the paper —
+
+ Our smoothing module performs several roles:
+
+ Differentiable boundary learning: It transforms the discrete upsampling operation into a continuous one, enabling effective backpropagation through chunk boundaries during training without requiring stochastic exploration-based approaches .
+
+ Adaptive error correction: Chunks with high confidence ( P t approximately 1.0 ) maintain discrete boundaries ( (expression) ), while chunks with low confidence ( P t approximately 0.5 ) are smoothed using information from previous chunks, creating a self-correcting mechanism.
+
+ Training stability: By smoothly interpolating between discrete choices based on confidence scores, a smoothing module prevents the model from overfitting to suboptimal chunking patterns early in training.
+
+ Figure   2 illustrates this with the example "...new product!".
+The word "product" can be morphologically decomposed into "pro-" and "-duct".
+Without the smoothing module (see Figure   2 -(b)), suboptimal chunking ( e.g., "du" as shown with half-filled circles) creates alignment mismatches that disrupt information flow.
+With the smoothing module (see Figure   2 -(c)), chunks with low confidence are smoothed with previous context, ensuring proper information propagation and enabling the model to learn optimal chunk boundaries through gradient descent.
+
+Upsampler..
+
+ We carefully design the upsampler (see Figure   1 -(d)) that decompresses (expression) to match the original resolution of inputs in the previous stage z s with the following definition:
+
+ — see the equation in the paper —
+
+ — see the equation in the paper —
+
+ Each component serves a specific purpose in enabling stable end-to-end learning:
+
+ Confidence scoring ( 6 ): The coefficient c quantifies the routing module’s confidence in its boundary decisions.
+For positions marked as boundaries ( b t=1 ), c t=p t rewards high boundary probabilities.
+In contrast, for non-boundary positions ( b t=0 ), c t=1-p t penalizes false boundary predictions.
+This formulation encourages the model to produce boundary probabilities near 1.0 at true boundaries and near 0.0 elsewhere.
+
+ Gradient stabilization ( 7 ): The Straight-Through Estimator (STE)  is a well established technique from discrete representation learning  that rounds confidence scores to 1.0 in the forward pass while maintaining continuous gradients during backpropagation.
+While H-Net already demonstrates strong performance without STE, incorporating this technique provides an additional performance boost that empirically further stabilizes the optimization dynamics.
+
+ Causal expansion ( 8 ): The upsampling operation repeats each compressed vector until the next boundary position, ensuring that each reconstructed position receives information from its most recent chunk.
+This maintains the sequential flow of information while expanding the compressed representation back to its original length.
+
+ Confidence-weighted decompression ( 9 ):
+Multiplying upsampled vectors by their confidence scores incentivizes the routing module to make confident, accurate decisions.
+High-confidence boundaries create direct reward signals that encourage the model to sharpen its boundary predictions through gradient feedback.
+
+2.2.3 Ratio Loss.
+
+ Without explicit regularization, the model may converge to trivial solutions: either retaining nearly all vectors (negating computational benefits) or compressing excessively (losing critical information).
+Inspired by load balancing mechanisms in Mixture-of-Experts (MoE) models , which face similar challenges in maintaining balanced expert utilization, we introduce a ratio loss to guide compression:
+
+ — see the equation in the paper —
+ where F represents the fraction of vectors actually selected, G denotes the average boundary probability, and N controls the target compression ratio.
+Mechanistically, although F is not differentiable, the network can be trained toward targeted compression ratios through G, which provides continuous feedback.
+
+ When F=G, the loss attains a minimum of L ratio=1 when F=G=1 over N.
+Interestingly, the loss can theoretically fall below 1 when (expression) ( e.g., F=1 over N+epsilon and G=1 over N-epsilon ), which we indeed observe during training.
+Despite this theoretical possibility, the loss effectively guides the model toward the desired compression ratio in practice.
+In practice, as our architectural design encourages the routing module to make confident decisions ( i.e., boundary probabilities approaching 0 or 1 ), F naturally converges toward G, and the loss effectively guides the model toward the desired compression ratio.
+
+ Combined together with the autoregressive prediction loss ( i.e., (expression) ), this mechanism preserves content-adaptive compression: the model learns which vectors to retain based on semantic importance rather than following predetermined patterns, distinguishing H-Net from fixed compression schemes.
+We fixed alpha=0.03 in all experiments in this paper as it provides a good balance between prediction accuracy and chunking efficiency; however, in other settings, it may be important to choose this hyperparameter more carefully.
+
+ Notationally, we sometimes use (N 0,N 1,...,N s) -DC to denote the full dynamic chunking mechanism together with its targeted chunking ratios.
+
+2.3 Improved Techniques for Hierarchical Sequence Modeling.
+
+ We introduce several techniques that improve the overall architecture.
+These may generally be considered techniques to improve signal propagation throughout the network, improving stability and learnability.
+
+Norm Balance..
+
+ Modern large language models employ pre-normalization architectures , departing from the post-normalization design of the original Transformer .
+Following established best practices, these models typically include a final normalization layer after all residual blocks.
+H-Net adopts this convention through network normalization, by placing an RMSNorm  at the end of each network component ( E s, D s, and M ).
+
+ This addition of a normalization layer addresses a critical challenge in hierarchical architectures.
+Pre-normalization allows residual stream magnitudes to grow unbounded through successive layers, with feature norms increasing monotonically.
+For H-Net, this poses a particular problem: the architecture leverages residual connections to preserve fine-grained information across stages.
+Without network normalization, outputs from deeper components (especially the many-layered main network) would dominate the residual signals from earlier encoder networks through imbalanced feature norms, neglecting the fine-grained details that are essential for decompression.
+The normalization layers restore balance between processed features and residual information, ensuring both contribute meaningfully to the final representation.
+
+Separation of Two Streams..
+
+ Encoder outputs ( (expression) ) serve dual purposes in our architecture: passing fine-grained information to corresponding decoders through residual connections, and providing compressed representations as inputs to subsequent stages.
+This dual functionality creates a design challenge, as these two roles may benefit from different representations.
+We consider three options to address this: (i) apply a projection to the residual connection only, (ii) apply a projection to the main network inputs only, (iii) and apply a projection to both pathways.
+
+ As indicated in equation ( 3 ), we adopt the first approach – adding a projection ( Linear ) only to the residual connection.
+This choice is motivated by the fundamental principle of designing deep learning models : maintaining intact gradient flow through the main computational path is crucial for effective training.
+
+ Empirically, we found that the third option underperforms despite additional parameters and computations, as the extra projections interfere with gradient propagation.
+The second option, while preserving residual gradients, disrupts the main network’s gradient flow and had worse training dynamics.
+Our chosen design maintains unimpeded gradients from deeper stages while allowing the residual connection to adapt its contribution through the learned projection.
+This encourages the model to leverage the main network’s computational depth while using residuals in a complementary role.
+
+ One additional detail is that this residual connection is initialized close to 0; earlier versions of H-Net found this to be an important detail, but it may be less important when combined with additional techniques such as LR modulation.
+
+Learning Rate Modulation.
+
+ The hierarchical design of H-Net requires careful adjustment of learning rates across stages to ensure balanced training dynamics.
+Modern theory establishes that neural network hyperparameters should be scaled in predictable ways for optimal trainability .
+Concretely, outer stages, which handle significantly longer input sequences, receive proportionally higher learning rates than inner stages operating on compressed representations.
+This scaling follows established principles that learning rates are adjusted based on effective batch size and model dimensions.
+The specific scaling factor we use accounts for both the total number of inputs processed at each stage and the corresponding hidden dimensions (see Appendix   C ).
+
+With this modulation, the model achieves more stable training dynamics and improved convergence behavior across the entire hierarchy.
+In particular, we empirically find that since outer stages directly influence the chunk boundaries that inner stages depend on, the higher learning rates in the outer stages seem to accelerate learning the chunking mechanism.
+
+2.4 Autoregressive Training and Inference.
+
+ Every component of H-Net ( i.e., encoder-, decoder-, main- networks, and the dynamic chunking mechanism) is carefully designed to preserve autoregressive properties essential for language modeling.
+
+Training..
+
+ During training, H-Net employs standard causal masking across all sequence mixing layers.
+DC maintains causality by computing boundary probabilities based only on current and previous representations.
+Specifically, the boundary probability p t depends on q t and k t from the current and previous positions (equation ( 4 )), ensuring no information leakage from future tokens.
+The smoothing module similarly maintains causality through its recursive formulation (equation ( 5 )), where each output depends only on past compressed representations.
+
+Inference..
+
+ For inference, H-Net generates raw bytes (or whatever the outermost modality is) autoregressively with a modified procedure to handle its hierarchical structure.
+
+ Generation with a prompt proceeds as follows:
+
+ 1.
+
+ Initial processing: During prefill, we generate chunks via the encoders (as in training). For each component (i.e. the isotropic components, and the routing module and dechunking layer), we generate a state. Isotropic state (e.g. KV cache for Transformer layers, SSM state for Mamba-2 layers) is generated as usual.
+
+ 2.
+
+ DC state and DC step: As noted above, the DC modules have recursive formulations that maintain causality at train-time. These recursive formulations become autoregressive formulations at inference time.
+
+ (a)
+
+ Routing Module: In order to compute p t, we need k t-1 (see equation ( 4 )), so our state consists of the key value of the most recent token processed.
+
+ (b)
+
+ Dechunking Layer: In order to compute (expression), we need P t and (expression). Thus, the dechunking layer state should consist of the last (expression) value.
+
+ 3.
+
+ Token Generation: To perform a model step, we do the following for a 1-stage hierarchy:
+
+ (a)
+
+ Pass the token through the encoder network,
+
+ (b)
+
+ Step the routing module to determine whether the token needs to be processed by the main network,
+
+ (c)
+
+ Step the main network if necessary, in which case we also need to step the dechunking layer.
+
+ (d)
+
+ Use the result of the dechunking layer to step the decoder network.
+
+ A consequence of this inference formulation is that, at inference time, H-Net decides individually for each token how much compute to use when processing it.
+Therefore, H-Net can allocate more or less compute to different tokens as it deems necessary.
+A particular connection is that inference resembles speculative decoding ,
+which also involves a small network (the draft model ) stepping on every token, and a larger network (the verification model ) only stepping on contiguous chunks of every few tokens.
+
+3 Experiments.
+
+ We first describe our general experimental protocol for language modeling, used for the majority of our experiments.
+In Section   3.1, we evaluate on a high-quality English dataset, showing significantly stronger performance than baselines, as well as improved robustness and interpretability from avoiding tokenization.
+In Section   3.2, we extend our evaluation to diverse datasets including Chinese, code, and DNA, with even larger performance improvements, demonstrating H-Net’s versatility as a general sequence model architecture.
+In Section   3.3, we provide comprehensive ablations that study individual architectural components and design choices.
+
+Models..
+
+ We compare against a standard tokenized Transformer following the Llama architecture .
+We additionally compare against several byte-level baselines:
+
+ MambaByte  is an isotropic model using pure Mamba-2 layers.
+
+ LlamaByte is an isotropic model using pure Transformer layers.
+
+ SpaceByte  represents the canonical hierarchical architecture with external boundary supervision, which chunks on spaces and "space-like" bytes.
+
+On English, the space-like delimiter heuristic empirically has an average ratio of 6.0 bytes per chunk.
+
+ SpaceByte++ is our modification of SpaceByte that includes our architectural modifications to the hierarchical structure (from Section   2.1 ).
+In particular, it changes the outer encoder/decoder networks to use Mamba-2, and modifies the layer counts and widths slightly to match the H-Net models below.
+
+ H-Net (space) further improves SpaceByte++ with our training improvements to the network ( Section   2.3 ), in particular, adding post-network norms, residual projections, and learning rate multipliers on the outer networks. H-Net (space) differs from our full H-Net only through the chunking function.
+
+ H-Net (pool) is a baseline ablating the effect of a simple chunking strategy that pools every k tokens, which is expected to be weaker than all of the data-dependent chunking strategies.
+
+ H-Net (1-stage) is our full H-Net method with DC learned end-to-end ( Section   2.2 ) with compression target N 0=6.
+
+ H-Net (2-stage) is our full H-Net method, iterated to two nested stages using N 0=3,N 1=3.
+
+ We provide results for two model scales, Large (L) and XL.
+Each scale is FLOP-matched to the corresponding GPT-3  ( i.e., GPT-3 L and GPT-3 XL) variant of the tokenized Transformer ( 760 M and 1.3 B parameters respectively).
+
+Experimental Setup..
+
+ Following established practice , we measure performance using bits-per-byte (BPB) to ensure comparability across different input representations.
+For tokenized models, this amounts to simply rescaling the total negative log likelihood of a sequence (in tokens) by the total number of bytes.
+In addition, we systematically control the data and compute budget for all models (see Table   1 ),
+matching all models carefully in both bytes-per-batch and FLOPs-per-byte:
+
+ Data Budget: We train all models on the 100B token subset sampled from the FineWeb-Edu dataset .
+All tokenizer-free models process 8192 utf-8 encoded bytes per sequence, while the Transformer uses 1792 tokens from the GPT2 tokenizer (roughly equivalent to 8192 bytes).
+We use batch size 256 for all models; the total batch size is just under 0.5 M tokens per batch for the baseline BPE Transformer, roughly matching protocols from prior work .
+
+ Compute Budget: For calculating FLOPs, we follow standard methodology  with an extension for Mamba-2 layers (see Appendix   B ).
+We use the BPE-tokenized Transformer’s #FLOPs as a reference, and the number of layers of the other models is adjusted accordingly to match the reference #FLOPs.
+
+ Training employs AdamW  optimizer with warmup-stable-decay (WSD)  scheduling with 10 percent linear warmup and 20 percent inverse-square-root decay .
+Following which recommends WSD schedulers with half the maximum learning rates as a cosine schedule, we adopt learning rates 2.5 times higher than GPT-3  standards; this corresponds to half of the maximum learning rate used in, yielding 6.25 times 10 -4 for Large -scale models and 5.0 times 10 -4 for XL -scale models.
+Architecture details include gated MLPs  in all Transformer layers and the main network’s Mamba layers, while Mamba layers in E and D are without an MLP.
+For Transformer layers in E and D, we use Sliding Window Attention (SWA)  with the window size of 1024.
+As discussed Section   2.1, E and D comprise mainly Mamba-2 layers.
+
+3.1 Language Modeling.
+
+Training Curves..
+
+ Figure  3 presents validation BPB metrics throughout training for both Large and XL model scales.
+
+Large Scale..
+
+ At the Large scale, we make note of the following comparisons.
+
+ All isotropic models severely underperform hierarchical models. Among these, MambaByte is significantly better than LlamaByte, both the FLOP-matched sliding window attention (SWA) variant and even the global attention variant that is data-matched but uses 2 times the FLOPs.
+
+ H-Net (pool) is much worse than all other H-Net variants, validating that fixed-width chunking is not effective.
+
+ SpaceByte is much worse than SpaceByte++, validating our strategy for network design as well as usage of Mamba in the outer networks ( Section   2.1 ).
+ SpaceByte++ is in turn worse than H-Net (space), validating our improved signal propagation techniques ( Section   2.3 ).
+
+ H-Net (space) is a very strong model reaching the performance of the BPE Transformer, validating the effect of data-dependent chunking strategies together with a well-designed hierarchical architecture.
+
+ H-Net (1-stage) is stronger than H-Net (space), validating that our dynamic chunking mechanism successfully learns how to segment data in a context-dependent way that improves over strong heuristics.
+
+ H-Net (2-stage) is significantly better than H-Net (1-stage), validating that iterated dynamic chunking can potentially learn a nested hierarchy of useful features, and leverage compute and parameters even more effectively.
+
+XL Scale..
+
+ At the XL scale, we zoom in more closely and compare only the strongest set of methods: SpaceByte++, H-Net (space), H-Net (1-stage), and H-Net (2-stage).
+
+ The same trends hold as at the Large scale.
+Our SpaceByte++ baseline is strong, but slightly worse than the BPE Transformer baseline.
+On the other hand, all byte-level H-Net methods start off worse than the token-level Transformer, but scale better after enough data.
+H-Net (space), H-Net (1-stage), and H-Net (2-stage)
+cross over the tokenized Transformer after just
+ 200 B bytes, 100 B bytes, and 30 B bytes respectively.
+Beyond these points, H-Net’s performance advantage widens progressively, demonstrating that the benefits of learnable dynamic chunking get strengthened with additional training data,
+as the model continuously refines its chunking strategy.
+
+Downstream Evaluations..
+
+ Table   2 presents zero-shot accuracy across diverse downstream benchmarks  using lm-evaluation-harness   for models at Large and XL scales.
+SpaceByte++, H-Net (space), and H-Net (1-stage) all have similar performance to the BPE Transformer at Large scale,
+and slightly outperform it at the XL scale,
+consistent with their close training curves (and possibly reflecting some noise in the evaluations).
+
+ H-Net (2-stage) consistently achieves the highest performance across most tasks,
+outperforming 2.2 % and 2.6 % over the Transformer baseline at Large and XL scales respectively.
+Notably, the Large H-Net (2-stage) matches the average downstream performance of the XL BPE Transformer.
+
+Robustness to Textual Perturbations..
+
+ Table   3 evaluates model robustness on HellaSwag with various textual perturbations, following protocols from BLT .
+Importantly, these are the same checkpoints trained on clean FineWeb-Edu data used to evaluate Table   2 ),
+without any form of special data mix or augmentations that may improve character-level robustness.
+H-Net (2-stage) demonstrates substantially improved robustness compared to all baselines, with performance gaps exceeding those observed in standard benchmarks.
+
+Visualization of Tokenized Positions..
+
+ In Figure   4, we provide visualizations of the boundaries dynamically drawn by H-Net (1-stage) and H-Net (2-stage).
+The visualization offers several insights about how the model decides boundaries.
+
+ Single-stage behavior: H-Net (1-stage) predominantly places boundaries at whitespace characters, closely mirroring the delimiters used by SpaceByte.
+This indicates that H-Net learns that word boundaries represent natural semantic units in text.
+This convergence to spacelike boundaries, discovered purely through end-to-end training, conversely validates SpaceByte’s strong empirical performance.
+
+ Hierarchical chunking patterns: The first stage of H-Net (2-stage) combines spacelike boundaries with first few characters of each word.
+This strategy helps the model because once the initial positions of a word are identified, the remaining characters become highly predictable.
+
+ Content-aware chunking:
+One might question if H-Net’s chunking decisions follow static rules, such as drawing boundaries only at certain fixed bytes ( e.g., whitespace).
+However, as shown in the figure, H-Net often merges multiple words and spacelike characters based on content (examples include the backbone, such as, and (ii) ).
+
+ Perturbation behavior:
+ Figure   16 shows the same example with textual perturbations such as removing whitespaces, which more prominently demonstrates that boundaries drawn by H-Net are based on content and context. In particular, it often still chunks in between semantic words even if the space is removed.
+
+3.2 Alternate Language Datasets.
+
+ Besides conventional language modeling, we also examine three other language modeling settings: Chinese, code, and DNA. These three settings present distinct challenges for traditional language-modeling pipelines:
+
+ Chinese characters consist of 3 utf-8 encoded bytes each and Chinese language does not have natural spaces; thus, constructing a vocabulary or picking boundaries requires special consideration.
+
+ Code contains much more whitespace than typical language, which allows greater compressibility if handled properly.
+It also has latent hierarchical structure that can be leveraged for improved reasoning capabilities.
+
+ DNA does not have any natural tokenization cues and instead must be processed as raw base pairs.
+
+ H-Net can operate on raw data without the need for handcrafted features (whether vocabulary or deliniation cues); it therefore provides a natural architecture that can operate naturally on any language.
+
+Experimental setup for Chinese and code..
+
+ On Chinese and code, we use 46B token subset from FineWeb-Edu-Chinese-V2.1  and Github subset from Pile  to train three models at the 1.3B GPT-3 XL scale: H-Net (2-stage), H-Net (space), and Transformer.
+We maintain the same bytes per gradient step (256 batch size with 8192 utf-8 encoded bytes per example) as the main text experiments. For the H-Net (2-stage), we use the same target downsampling ratio ( N 0=N 1=3 ) as the main experiments. Unlike BPE or spacelike-based tokenization, whose downsampling ratios can vary widely by dataset, H-Net allows for using similar compute budgets without much adjustment. For H-Net (space), we use the same definition of spacelike as the original SpaceByte paper, and for BPE, we use the Llama3 tokenizer , as the GPT2 tokenizer attains very poor downsampling ratios on both datasets. Despite this change, both H-Net (space) and Transformer (BPE) still have highly varied downsampling ratios between ordinary (primarily English) language, Chinese, and code. On the other hand, H-Net can adhere to a target ratio regardless of dataset, chunking into concepts at appropriate ratios.
+
+ Even with the Llama3 tokenizer, we find that H-Net (2-stage) scales better than BPE Transformer and H-Net (space) on both Chinese and code ( Figure   5 ), and achieves lower compression after the decay phase ( Table   4 ). We additionally measure the performance of each Chinese-language model on the Chinese split of XWinograd, a multilingual Winograd Schema Challenge, where H-Net (2-stage) is significantly better than H-Net (space) which in turn is better than Transformer ( Table   4 ).
+
+DNA (Human Genome)..
+
+ DNA is a setting that presents both a unique promise and challenge for hierarchical modeling.
+For one, handcrafted tokens do not work well on DNA, due to the lack of segmentation cues.
+Additionally, the same sequence of base pairs may serve different functions ( e.g., depending on whether or not the pair is inside a gene or not).
+Consequently, a naive BPE-based approach may not work either.
+On the other hand, DNA can exhibit higher resolution structure ( e.g., codons, various regulatory elements),
+suggesting that there is room for principled hierarchical modeling.
+Indeed, state-of-the-art DNA models operate directly on base pairs (A, C, G, T) with implicit hierarchical structure.
+
+ Thus, we evaluated four models on DNA: two isotropic models (pure Transformer and pure Mamba-2) operating at the base-pair level, and two corresponding H-Net (1-stage) with Transformer and Mamba-2 as the main network.
+Each model was trained on the HG38 dataset with a learning rate of 5 times 10 -3 for modules at the base-pair resolution.
+For the H-Net models, we used a downsampling ratio of N 0=3.
+All models were trained with a d model of 512, which was used for all isotropic modules of H-Net (including the main network).
+
+ Previous work has shown that SSMs show improved DNA modeling ability compared to Transformers, and we find that this effect is preserved when examining Transformers vs. Mamba-2 as the main network (see Table   5 ).
+This finding suggests that existing layer selection principles can be applied when deciding main network architecture.
+In fact, by directly comparing the perplexity curves during the stable phase of training ( Figure   6 ), we find that H-Net models can achieve similar performance to isotropic models with just 3.6 times the amount of data, a finding that holds for both choices of main network architecture.
+
+3.3 Ablation Studies.
+
+ For ablation studies, we employ H-Net at Large scale following the configurations in Table   1, training on 36 B tokens randomly sampled from FineWeb-Edu.
+
+Importance of Components in H-Net..
+
+ Figure   7 illustrates the impact of each architectural component on both model performance and compression ratio ( L s+1/L s ) stability during training.
+We conduct three targeted ablations: (i) using direct upsampling (expression) by removing the smoothing module ( w/o smoothing ), (ii) replacing the routing module that is based on scaled cosine similarity, with direct probability prediction from individual inputs ( w/o cosine routing ),
+and (iii) skipping the straight-through estimator in equation ( 9 ) (w/o STE).
+
+ The smoothing module proves essential for stable training dynamics.
+Without this module, compression ratios fluctuate severely throughout training, preventing the model from learning consistent chunking boundaries.
+This instability directly manifests as substantial performance degradation, confirming that smooth gradient flow through the decompression process is crucial for effective end-to-end learning.
+While less critical than the smoothing module, both the similarity-based routing module and STE operation exhibit importance in training stability and final performance.
+These components help maintain consistent compression ratios and lead to more interpretable chunking patterns.
+The similarity-based approach particularly enables the model to identify natural linguistic boundaries ( e.g., whitespaces, subwords) by comparing adjacent representations rather than making isolated predictions.
+
+Encoder & Decoder Layer Selection..
+
+ The composition of sequence mixing layers in H-Net’s encoders and decoders substantially influences both compression efficiency and modeling capability.
+We systematically evaluate different architectural combinations using H-Net (1-stage) while fixing all other configurations in Table   1 the same.
+Four distinct encoder-decoder ( E 0 - D 0 ) pairings are tested: M4-M4, M2T1-T1M2, T1M2-M2T1, and T2-T2, where M denotes a Mamba-2 layer and T denotes a Transformer layer.
+These combinations are chosen by keeping the symmetry and replacing each Transformer layer with two Mamba-2 layers, as they contain equivalent parameter counts — 12D 2 for Transformer ( 4D 2 for the attention mechanism and 8D 2 for an MLP) vs. approximately 6D 2 per Mamba-2 layer (no MLP).
+
+ Figure   8 and Figure   9 demonstrate that Mamba layers are essential for effective byte-level sequence processing.
+For both H-Net and SpaceByte++, the pure Transformer configuration (T2-T2) exhibits by far the worst performance despite using more FLOPs (it also down-compresses sequences poorly compared to other configurations, thus using more compute in the main network).
+This configuration struggles to compress byte sequences effectively, resulting in both computational waste and degraded modeling performance.
+Performance improves monotonically with increased Mamba layer allocation, achieving optimal results with the highest compression efficiency in the pure Mamba configuration (M4-M4).
+These findings align with recent research demonstrating SSMs’ advantages over Transformers for fine-grained sequence modeling , as corroborated by MambaByte’s superior performance over LlamaByte in Figure   3.
+
+ A natural question arises: does the importance of Mamba layers (i) stem specifically from processing fine-grained byte inputs,
+or (ii) because they are better for compressing information into the next stage, even at coarser input resolutions?
+To investigate these hypotheses,
+we train a 1-stage H-Net on top of BPE-tokenized inputs processed by the GPT-2 tokenizer.
+We then evaluate six different encoder-decoder combinations.
+
+ If hypothesis (i) holds, then we would expect different combinations of Mamba/Transformer layers in the encoder/decoder to have similar performance, since it is known that they have similar performance on standard tokenized language modeling.
+
+ If hypothesis (ii) holds, then we would expect that encoders/decoders using some Mamba layers to be better than pure Transformer layers.
+
+ As demonstrated in Figure   10, Mamba layers prove significantly important even when processing BPE tokens rather than raw bytes, providing evidence for the second hypothesis.
+
+ We hypothesize that this consistent advantage across input granularities stems from fundamental architectural differences between SSMs and Transformers.
+While Transformers naturally store complete key-value caches for all positions, SSMs are designed to compress information into fixed-size states.
+This compression-oriented architecture aligns naturally with our chunking mechanism, which requires aggregating multiple input vectors into consolidated representations.
+The inherent compression capability of Mamba layers makes them particularly well-suited for the encoder and decoder roles in our hierarchical architecture .
+Based on these findings, we employ Mamba layers throughout all encoders and decoders in our final H-Net configuration, as detailed in Table   1.
+
+ These findings transfer to more general hierarchical structures (such as a 2-stage H-Net at the byte level),
+in which case the outermost encoder and decoder layers ( E 0 and D 0 )
+serve a similar role as the GPT-2 tokenizer and the inner layers ( E 1 and D 1 )
+would share similar findings of benefiting from using Mamba layers.
+
+Hybrid Architectures for the Main Network..
+
+ We also aimed to understand the role of architecture selection in the main network.
+To this end, we compared H-Net (2-stage) with an identical model where we replaced the Transformer stack with a hybrid model containing both 20 Mamba-2 and 7 Transformer layers interleaved in a 3:1 ratio.
+Hybrid architectures have shown promise in isotropic (BPE) models , and similarly perform better for our choice of main network ( Figure   11 ).
+
+Comparison to Mixture-of-Experts..
+
+ H-Net can be viewed as a form of dynamic sparsity similar to Mixture-of-Experts (MoEs), in that they are able to improve performance by using more parameters, all while keeping the total FLOPs budget constant.
+We were interested in understanding whether or not its performance benefits were simply due to increasing sparsity.
+We compare against a sparsified version of LlamaByte (byte-level isotropic Transformer model) at the Large scale with a standard Mixture-of-Experts recipe  and similar parameter count as ours ( Figure   12 ).
+While sparsity does improve LlamaByte performance, it is still far worse than either FLOPs-matched H-Net (1-stage) or H-Net (2-stage), even with similar parameter count.
+We interpret this result as: H-Net not only achieves sparsity, but does so in a more semantically meaningful manner, which allows for better scaling than even generic sparse methods.
+
+4 Discussion.
+
+Related Work..
+
+ Table   6 summarizes related models, particularly those motivated by byte-level language modeling.
+These methods are described in detail in Appendix   A, which provides an extended related work.
+
+Distillation..
+
+ For new architectures,
+showing that they can be distilled from standard pretrained Transformers can result in stronger new models with substantially reduced training .
+In Appendix   F, we investigate this for H-Net by initializing the main network from a pretrained Llama checkpoint and learning the encoder and decoder networks.
+With less than 200B bytes of training, the resulting model shows strong performance much better than if it were trained from scratch, although still worse than the teacher model.
+Our distillation procedure is perhaps currently the most efficient way of creating an end-to-end byte-level model, but we expect that it can be further improved.
+
+Efficiency..
+
+ Because of the dynamic nature of our model, it requires different considerations in making both the training pass and inference step efficient.
+Our implementation incorporates several engineering techniques already, such as handling variable sequence lengths within a mini-batch using specialized kernels provided by.
+Because of the different architectural considerations, it is difficult to compare to more standard pipelines;
+our current implementation may be approximately up to 2 times slower than an isotropic model during training.
+
+ Note that the memory usage of our model is also dynamic, unlike standard sequence models, so other edge cases may happen, such as unlucky batches of sequences that are too long and overflow the device memory.
+Relatedly, one difficulty with stepping H-Net in batched mode is that different tokens in the batch may require different amounts of compute.
+
+ We believe that such considerations are not fundamental and will be an important subject of future work;
+just as how related dynamic sparsity and conditional compute methods such as Mixture-of-Experts and speculative decoding  benefited from years of dedicated engineering improvements.
+
+Deeper Hierarchies..
+
+ H-Net is the first dynamic hierarchical model that can recursively nest its chunking strategy (see Table   6 and Appendix   A ).
+In this paper, we showed that iterating H-Net from 0 stages (i.e. an isotropic model) to 1 stage and from 1 stage to 2 stages consistently improves performance.
+We did not attempt a 3-stage H-Net at all for simplicity. Testing if H-Net can be iterated even deeper remains an immediate direction to explore.
+
+Global Sequence Model Considerations..
+
+ Much research on sequence model architectures has focused on individual layers, where the tradeoffs are often quite direct.
+For example, recurrent models such as state space models   and linear attention variants   compress arbitrarily long sequences into fixed-size hidden states, offering higher efficiency at the expense of precise retrieval of information (e.g. struggling with recall  ).
+
+ H-Net, however, is a global architectural design that is simultaneously orthogonal to, but may have interactive effects with, the choice of individual layers.
+For example, using deeper hierarchies with exclusively recurrent layers would preserve linear computation (in sequence length) but logarithmic state size, resembling newer sequence model layers such as log-linear attention and Prefix Scannable Models, but with dynamic hierarchies.
+Similarly, the recursive compression of sequence length may alleviate their limitations in retrieval on long sequences.
+This may be considered a form of dynamic state allocation.
+This paper has not focused on such implications, which would be a possible direction for future research.
+
+Long Context..
+
+ Similarly, an effect of the global hierarchical structure may be improved long context abilities, which is a common motivation for hierarchical models .
+Much research on sequence models again focuses on long context at the layer level , and we hypothesize that H-Nets may provide general long context improvements in an orthogonal direction.
+
+Latent Test-Time Compute..
+
+ Test-time compute techniques, exemplified by Chain-of-Thought, have been shown to improve model performance on a variety of reasoning benchmarks.
+Recent work has explored including latent representations (as opposed to just tokens) in the reasoning process, culminating in “recurrent depth" models that
+roll out an RNN for as many steps as needed before emitting a token.
+As discussed in Section   2.4, H-Net is also capable of dynamically changing compute per output generated;
+thus, it can be viewed as a model that can dynamically allocate latent test-time compute as well.
+Additionally, as the motivation of H-Net is to recursively build higher-order abstractions, we hypothesize that it would be more effective as a reasoning model that operates over its own learned concepts instead of arbitrary token inputs.
+
+Sparsity..
+
+ H-Net can be viewed as a form of dynamic sparsity or conditional computation, and is related to concepts such as mixture-of-experts (MoE)  and mixture-of-depths .
+We showed that at the byte level, DC is much more effective than MoE when controlled for parameters and compute ( Figure   12 ), and leave fleshing out further connections and comparisons for future work.
+We also note that H-Net can be viewed as orthogonal to MoE, which can be applied to sparsify any MLP layers within an H-Net.
+
+Scale..
+
+ The largest models in this paper were FLOP-matched to the equivalent of a 1.3B parameter Transformer.
+While we believe that this provides sufficient evidence for the effectiveness of this approach, it remains to validate H-Net at larger model sizes of 3B, 7B, and beyond.
+We note that while we observed no instabilities at our model sizes, the added complexity of H-Net and inherent difficulties of learning end-to-end discrete selection problems may require more serious investigation of potential stability challenges at larger scale.
+
+Scaling Laws..
+
+ Formally estimating the scaling behavior of a model requires calculating scaling law coefficients that sweep across a large range of model sizes and compute horizons .
+We did not pursue this formal approach in this paper due to resource constraints.
+
+ Instead, we used a simpler heuristic for the scaling behavior of our models, at least with respect to data.
+We note that
+
+ essentially all modern models live in the “overtrained" regime (with respect to the formal scaling laws) due to inference considerations at deployment ; and
+
+ these overtrained models often use modern schedulers that have extended periods of constant learning rates .
+
+ Thus, we decided to use the models’ losses during the constant phase as a proxy for how quickly they improve with data.
+We believe this still provides useful insight into scaling behaviors, and a more dedicated analysis of formal scaling laws remains an important topic for future work.
+
+BPB Calculation..
+
+ For baseline BPE tokenized models throughout this work, we used the standard bits-per-byte (BPB) calculation of simply rescaling the negative log-likelihood (or log perplexity) by the average number of bytes per token.
+However, this is not strictly speaking a correct BPB estimate for tokenized models, as it assumes that the probability the model outputs a string is equal to the probability of the model outputting the greedy tokenization of the string.
+
+ Depending on how the model is trained, it is possible the model can output other tokenization sequences with nonzero probability.
+There are an exponential number of these, so computing the exact BPB is intractable; however, concurrent work shows that the standard BPB calculation
+indeed overestimates BPB.
+Due to the high computational overhead of estimating the true BPB, we only provide the standard (inexact) value; nevertheless, H-Net’s superior performance on downstreams provides supporting evidence that it scales better than BPE models.
+
+5 Conclusion.
+
+ Major advances in deep learning have resulted from powerful architectural innovations enabling previously-handcrafted features to be learned from data,
+from CNNs learning visual features  to Transformers discovering linguistic patterns .
+ H-Nets similarly unlock the ability to remove another layer of pre-processing, such as tokenizers, and instead learn them end-to-end.
+This ability results from a set of new techniques we introduce that work together to form a dynamic chunking mechanism,
+which is able to learn content- and context- dependent discrete segmentation strategies through standard gradient-based optimization.
+A single-stage byte-level H-Net already exceeds the performance of standard tokenized language models,
+and recursive H-Nets with multiple stages of dynamic chunking further improve its scaling.
+H-Nets substantially remedy issues with tokenizers, display very strong performance on diverse languages and language-like modalities,
+and more broadly may serve as the backbone of general foundation models that do more learning with less processing.
+
+This concludes the main body of the paper. References and appendices are omitted from this narration.
