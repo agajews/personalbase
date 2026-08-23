@@ -1,42 +1,96 @@
 // Shared presentational bits and navigation helpers.
+import { useState } from "react";
 import { api, type Mark } from "./api.js";
 
 /**
- * Two-tier marking: none < saved < want_to_read. Clicking the active tier
- * steps down one level.
+ * A button that disables itself and shows a working state while its async
+ * onClick is in flight — database round trips are visible, not mysterious.
+ */
+export function BusyButton({
+  onClick,
+  className,
+  disabled,
+  title,
+  children,
+}: {
+  onClick: () => Promise<unknown>;
+  className?: string;
+  disabled?: boolean;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className={`${className ?? ""} ${busy ? "busy" : ""}`}
+      disabled={disabled === true || busy}
+      title={title}
+      onClick={() => {
+        if (busy) return;
+        setBusy(true);
+        void onClick().finally(() => setBusy(false));
+      }}
+    >
+      {children}
+      {busy && <span className="spinner" aria-label="working" />}
+    </button>
+  );
+}
+
+/**
+ * Two-tier marking on any paper or resource entity: none < saved <
+ * want_to_read. Clicking the active tier steps down one level.
  */
 export function MarkButtons({
-  arxivId,
+  entityId,
   mark,
   onChanged,
 }: {
-  arxivId: string;
+  entityId: string;
   mark: Mark | null;
   onChanged: () => void;
 }) {
   const saved = mark === "saved" || mark === "want_to_read";
   const wtr = mark === "want_to_read";
   const set = async (m: Mark | "none") => {
-    await api.mark(arxivId, m);
+    await api.mark(entityId, m);
     onChanged();
   };
   return (
     <span className="mark-buttons" onClick={(e) => e.stopPropagation()}>
-      <button
+      <BusyButton
         className={`mark ${saved ? "on" : ""}`}
         title={saved ? "unsave" : "save to library"}
-        onClick={() => void set(wtr ? "saved" : saved ? "none" : "saved")}
+        onClick={() => set(wtr ? "saved" : saved ? "none" : "saved")}
       >
         {saved ? "✓ saved" : "save"}
-      </button>
-      <button
+      </BusyButton>
+      <BusyButton
         className={`mark ${wtr ? "on" : ""}`}
         title={wtr ? "back to saved" : "add to the read-in-depth shortlist"}
-        onClick={() => void set(wtr ? "saved" : "want_to_read")}
+        onClick={() => set(wtr ? "saved" : "want_to_read")}
       >
         {wtr ? "★ want to read" : "want to read"}
-      </button>
+      </BusyButton>
     </span>
+  );
+}
+
+/** Category tags, each linking to the papers browser filtered to it. */
+export function CategoryChips({ categories }: { categories: string[] }) {
+  return (
+    <>
+      {categories.slice(0, 3).map((cat) => (
+        <a
+          key={cat}
+          className="cat-chip"
+          href={`#/papers/${encodeURIComponent(cat)}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {cat}
+        </a>
+      ))}
+    </>
   );
 }
 

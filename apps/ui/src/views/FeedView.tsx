@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem, type FilterSummary } from "../api.js";
-import { AuthorsLine, EntityChip, formatDay, hashHue, MarkButtons } from "../ui.js";
+import { AuthorsLine, CategoryChips, EntityChip, formatDay, hashHue, MarkButtons } from "../ui.js";
 
 function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
   const groups: [string, FeedItem[]][] = [];
@@ -78,7 +78,8 @@ function FeedRow({
       {top !== undefined && <p className="verdict-reason">{top.reason}</p>}
       <p className="verdict-abstract">{item.abstract}</p>
       <p className="verdict-actions">
-        <MarkButtons arxivId={item.arxivId} mark={item.mark} onChanged={onMarked} />
+        <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={onMarked} />
+        <CategoryChips categories={item.categories} />
       </p>
     </details>
   );

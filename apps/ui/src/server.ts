@@ -345,8 +345,12 @@ app.get("/api/papers", async (c) => {
   const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
   const markParam = c.req.query("mark"); // saved | want_to_read | unmarked | undefined
   const q = (c.req.query("q") ?? "").trim();
+  const category = (c.req.query("category") ?? "").trim();
 
   const qCond = q === "" ? sql`true` : sql`p.title ilike ${"%" + q + "%"}`;
+  // jsonb ? operator: array contains the string. (Never `${param}::jsonb` —
+  // postgres.js JSON-encodes the parameter again, yielding a jsonb string.)
+  const catCond = category === "" ? sql`true` : sql`p.categories ? ${category}`;
   const markCond =
     markParam === "saved"
       ? sql`m.mark in ('saved', 'want_to_read')`
@@ -360,12 +364,12 @@ app.get("/api/papers", async (c) => {
   const totalRows = await sql`
     select count(*)::int as n
     from papers p left join paper_marks m on m.entity_id = p.entity_id
-    where ${qCond} and ${markCond}`;
+    where ${qCond} and ${markCond} and ${catCond}`;
   const rows = await sql`
     select p.arxiv_id, p.entity_id, p.title, p.abstract, p.authors, p.categories,
            p.published_at, p.updated_at, p.ingested_at, m.mark
     from papers p left join paper_marks m on m.entity_id = p.entity_id
-    where ${qCond} and ${markCond}
+    where ${qCond} and ${markCond} and ${catCond}
     order by ${sql(sortCol)} ${order} nulls last, p.arxiv_id
     limit ${limit} offset ${offset}`;
 
@@ -624,23 +628,40 @@ app.post("/api/jobs/ingest", async (c) => {
 });
 
 const markBody = z.object({
-  arxivId: z.string().min(1),
+  entityId: z.string().uuid(),
   mark: z.enum(["saved", "want_to_read", "none"]),
 });
 
 app.post("/api/mark", async (c) => {
   const body = markBody.parse(await c.req.json());
+  const target = (
+    await sql`select kind, ref from entities where entity_id = ${body.entityId}`
+  )[0];
+  if (target === undefined) {
+    return c.json({ error: "no such entity" }, 404);
+  }
+  if (target["kind"] !== "paper" && target["kind"] !== "resource") {
+    return c.json({ error: `cannot mark a ${target["kind"]}` }, 400);
+  }
   await appendEvents(sql, coreRegistry, [
     {
       type: "user.paper.marked",
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: "ui:web",
       occurredAt: new Date().toISOString(),
-      payload: body,
+      payload: { target: { kind: target["kind"], ref: target["ref"] }, mark: body.mark },
     },
   ]);
   await catchUpFolds(sql, coreRegistry, folds);
   return c.json({ ok: true });
+});
+
+app.get("/api/categories", async (c) => {
+  const rows = await sql`
+    select c as name, count(*)::int as n
+    from papers, jsonb_array_elements_text(categories) as c
+    group by c order by n desc limit 60`;
+  return c.json({ categories: rows.map((r) => ({ name: r["name"], papers: r["n"] })) });
 });
 
 app.get("/api/marked/:mark", async (c) => {

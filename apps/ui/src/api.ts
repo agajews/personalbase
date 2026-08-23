@@ -170,6 +170,7 @@ export interface PapersQuery {
   sort: "published" | "ingested" | "title";
   dir: "asc" | "desc";
   mark?: "saved" | "want_to_read" | "unmarked";
+  category?: string;
   q?: string;
   offset?: number;
 }
@@ -223,10 +224,15 @@ export const api = {
   papers: (query: PapersQuery): Promise<PapersPage> => {
     const params = new URLSearchParams({ sort: query.sort, dir: query.dir });
     if (query.mark !== undefined) params.set("mark", query.mark);
+    if (query.category !== undefined && query.category !== "") {
+      params.set("category", query.category);
+    }
     if (query.q !== undefined && query.q !== "") params.set("q", query.q);
     if (query.offset !== undefined) params.set("offset", String(query.offset));
     return request(`/api/papers?${params}`);
   },
+  categories: (): Promise<{ categories: { name: string; papers: number }[] }> =>
+    request("/api/categories"),
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (
     name: string,
@@ -245,8 +251,8 @@ export const api = {
   ingest: (days: number, categories: string[]): Promise<unknown> =>
     post("/api/jobs/ingest", { days, categories }),
   ingestLabs: (): Promise<unknown> => post("/api/jobs/labs", {}),
-  mark: (arxivId: string, mark: Mark | "none"): Promise<unknown> =>
-    post("/api/mark", { arxivId, mark }),
+  mark: (entityId: string, mark: Mark | "none"): Promise<unknown> =>
+    post("/api/mark", { entityId, mark }),
   marked: (mark: Mark): Promise<{ mark: Mark; items: MarkedItem[] }> =>
     request(`/api/marked/${mark}`),
 };

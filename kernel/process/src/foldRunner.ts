@@ -65,9 +65,7 @@ async function stepFold(
     if (events.length === 0) {
       return 0;
     }
-    for (const event of events) {
-      await fold.apply(tx, event);
-    }
+    await fold.apply(tx, events);
     const last = events[events.length - 1]!.seq;
     await tx`
       update checkpoints set last_seq = ${last.toString()}, updated_at = now()

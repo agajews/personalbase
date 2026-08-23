@@ -39,13 +39,11 @@ export function MarkedView({ mark }: { mark: Mark }) {
                 {item.title ?? item.entityId}
               </a>
               <span className="link-provenance">{ago(item.markedAt)}</span>
-              {item.arxivId !== null && (
-                <MarkButtons
-                  arxivId={item.arxivId}
-                  mark={item.mark}
-                  onChanged={() => setTick((t) => t + 1)}
-                />
-              )}
+              <MarkButtons
+                entityId={item.entityId}
+                mark={item.mark}
+                onChanged={() => setTick((t) => t + 1)}
+              />
             </div>
           ))}
         </section>

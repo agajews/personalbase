@@ -3,7 +3,7 @@ export { migrate, kernelMigrationsDir } from "./migrate.js";
 export { appendEvents, type NewEvent } from "./append.js";
 export {
   readEvents,
-  patternToLike,
+  expandPatterns,
   type EventTypePattern,
   type StoredEvent,
 } from "./read.js";
