@@ -153,6 +153,33 @@ export interface SearchResults {
   orgs: { entityId: string; displayName: string }[];
 }
 
+export interface PaperListItem {
+  arxivId: string;
+  entityId: string;
+  mark: Mark | null;
+  title: string;
+  abstract: string;
+  categories: string[];
+  authors: EntityRef[];
+  orgs: EntityRef[];
+  publishedAt: string;
+  ingestedAt: string;
+}
+
+export interface PapersQuery {
+  sort: "published" | "ingested" | "title";
+  dir: "asc" | "desc";
+  mark?: "saved" | "want_to_read" | "unmarked";
+  q?: string;
+  offset?: number;
+}
+
+export interface PapersPage {
+  total: number;
+  offset: number;
+  items: PaperListItem[];
+}
+
 export interface TableList {
   tables: { name: string; rows: number }[];
 }
@@ -193,6 +220,13 @@ export const api = {
     request(`/api/entity/${encodeURIComponent(id)}`),
   search: (q: string): Promise<SearchResults> =>
     request(`/api/search?q=${encodeURIComponent(q)}`),
+  papers: (query: PapersQuery): Promise<PapersPage> => {
+    const params = new URLSearchParams({ sort: query.sort, dir: query.dir });
+    if (query.mark !== undefined) params.set("mark", query.mark);
+    if (query.q !== undefined && query.q !== "") params.set("q", query.q);
+    if (query.offset !== undefined) params.set("offset", String(query.offset));
+    return request(`/api/papers?${params}`);
+  },
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (
     name: string,

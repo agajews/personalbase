@@ -327,6 +327,85 @@ app.get("/api/feed", async (c) => {
   return c.json({ days, items });
 });
 
+// The papers browser: every paper in the system, sortable and filterable.
+const paperSortColumns = {
+  published: "published_at",
+  ingested: "ingested_at",
+  title: "title",
+} as const;
+
+app.get("/api/papers", async (c) => {
+  const sortKey = (c.req.query("sort") ?? "published") as keyof typeof paperSortColumns;
+  const sortCol = paperSortColumns[sortKey];
+  if (sortCol === undefined) {
+    return c.json({ error: `unknown sort ${sortKey}` }, 400);
+  }
+  const asc = c.req.query("dir") === "asc";
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? 50)));
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
+  const markParam = c.req.query("mark"); // saved | want_to_read | unmarked | undefined
+  const q = (c.req.query("q") ?? "").trim();
+
+  const qCond = q === "" ? sql`true` : sql`p.title ilike ${"%" + q + "%"}`;
+  const markCond =
+    markParam === "saved"
+      ? sql`m.mark in ('saved', 'want_to_read')`
+      : markParam === "want_to_read"
+        ? sql`m.mark = 'want_to_read'`
+        : markParam === "unmarked"
+          ? sql`m.mark is null`
+          : sql`true`;
+  const order = asc ? sql`asc` : sql`desc`;
+
+  const totalRows = await sql`
+    select count(*)::int as n
+    from papers p left join paper_marks m on m.entity_id = p.entity_id
+    where ${qCond} and ${markCond}`;
+  const rows = await sql`
+    select p.arxiv_id, p.entity_id, p.title, p.abstract, p.authors, p.categories,
+           p.published_at, p.updated_at, p.ingested_at, m.mark
+    from papers p left join paper_marks m on m.entity_id = p.entity_id
+    where ${qCond} and ${markCond}
+    order by ${sql(sortCol)} ${order} nulls last, p.arxiv_id
+    limit ${limit} offset ${offset}`;
+
+  const orgLinks =
+    rows.length === 0
+      ? []
+      : await sql`
+          select l.from_id, e.display_name, e.entity_id
+          from links l join entities e on e.entity_id = l.to_id
+          where l.from_id = any(${rows.map((r) => r["entity_id"])})
+            and l.link_type in ('published_by', 'affiliated_org') and e.kind = 'org'`;
+  const orgsByPaper = new Map<string, Map<string, string>>();
+  for (const link of orgLinks) {
+    const map = orgsByPaper.get(link["from_id"]) ?? new Map<string, string>();
+    map.set(link["entity_id"], link["display_name"]);
+    orgsByPaper.set(link["from_id"], map);
+  }
+  return c.json({
+    total: totalRows[0]!["n"],
+    offset,
+    items: rows.map((r) => ({
+      arxivId: r["arxiv_id"],
+      entityId: r["entity_id"],
+      mark: r["mark"],
+      title: r["title"],
+      abstract: r["abstract"],
+      categories: r["categories"],
+      authors: (r["authors"] as string[]).map((name) => ({
+        name,
+        entityId: entityId("person", personRef(name)),
+      })),
+      orgs: [...(orgsByPaper.get(r["entity_id"]) ?? new Map<string, string>())].map(
+        ([eid, name]) => ({ entityId: eid, name }),
+      ),
+      publishedAt: r["published_at"],
+      ingestedAt: r["ingested_at"],
+    })),
+  });
+});
+
 // ---- exploration: entity pages, search, raw tables ----
 
 app.get("/api/entity/:id", async (c) => {

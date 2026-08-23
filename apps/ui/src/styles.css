@@ -561,6 +561,38 @@ button.mark.on {
   flex-shrink: 0;
 }
 
+/* ---- papers browser ---- */
+
+.papers-view {
+  max-width: 780px;
+}
+
+.papers-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.papers-toolbar input[type="search"] {
+  flex: 1;
+  max-width: 260px;
+}
+
+.paper-date {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  align-self: center;
+}
+
+.load-more {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-top: 10px;
+}
+
 /* ---- entity pages, search, tables ---- */
 
 .entity-page {

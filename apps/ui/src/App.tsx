@@ -7,6 +7,7 @@ import { EntityView } from "./views/EntityView.js";
 import { SearchView } from "./views/SearchView.js";
 import { TablesView } from "./views/TablesView.js";
 import { MarkedView } from "./views/MarkedView.js";
+import { PapersView } from "./views/PapersView.js";
 
 type Route =
   | { kind: "feed" }
@@ -15,6 +16,7 @@ type Route =
   | { kind: "entity"; id: string }
   | { kind: "search"; q: string }
   | { kind: "marked"; mark: "saved" | "want_to_read" }
+  | { kind: "papers" }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -32,6 +34,8 @@ function parseRoute(hash: string): Route {
         : { kind: "feed" };
     case "search":
       return { kind: "search", q: decodeURIComponent(parts.slice(1).join("/")) };
+    case "papers":
+      return { kind: "papers" };
     case "saved":
       return { kind: "marked", mark: "saved" };
     case "want-to-read":
@@ -146,7 +150,7 @@ export function App() {
             </span>
           </button>
           <button
-            className={`filter-item today ${route.kind === "marked" && route.mark === "saved" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "marked" && route.mark === "saved" ? "active" : ""}`}
             onClick={() => navTo("/saved")}
           >
             <span className="filter-name">Saved</span>
@@ -154,6 +158,15 @@ export function App() {
               <span className="match-count">
                 {(state?.marks.saved ?? 0) + (state?.marks.wantToRead ?? 0)}
               </span>
+            </span>
+          </button>
+          <button
+            className={`filter-item today ${route.kind === "papers" ? "active" : ""}`}
+            onClick={() => navTo("/papers")}
+          >
+            <span className="filter-name">All papers</span>
+            <span className="filter-meta">
+              <span className="match-count">{state?.papers.total ?? 0}</span>
             </span>
           </button>
 
@@ -239,6 +252,7 @@ export function App() {
           {route.kind === "entity" && <EntityView id={route.id} />}
           {route.kind === "search" && <SearchView q={route.q} />}
           {route.kind === "marked" && <MarkedView mark={route.mark} />}
+          {route.kind === "papers" && <PapersView />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>
