@@ -4,6 +4,7 @@ import { claimJob, completeJob, enqueueJob, failJob } from "./jobs.js";
 import type { Reactor, ReactorCtx, ReactorInput, ReactorOutput } from "./types.js";
 
 const eventBatchSize = 100;
+const eventMaxAttempts = 3;
 
 function makeCtx(
   sql: Sql,
@@ -109,7 +110,7 @@ export async function catchUpEventReactors(
       insert into checkpoints (process, version, last_seq)
       values (${key}, 1, 0)
       on conflict (process) do nothing`;
-    while (true) {
+    catchup: while (true) {
       const rows = await sql`select last_seq from checkpoints where process = ${key}`;
       const cursor = BigInt(rows[0]!["last_seq"]);
       const events = await readEvents(sql, registry, {
@@ -121,7 +122,33 @@ export async function catchUpEventReactors(
         break;
       }
       for (const event of events) {
-        await runReactor(sql, registry, reactor, { kind: "event", event });
+        try {
+          await runReactor(sql, registry, reactor, { kind: "event", event });
+        } catch (error) {
+          // A throwing reactor must not take the daemon down (a stuck
+          // checkpoint would crash-loop on the same event forever). The
+          // failed run is already recorded; retry the event on later passes,
+          // bounded so a poison event can't become an LLM spend loop either.
+          const message = error instanceof Error ? error.message : String(error);
+          const attempts = (
+            await sql`
+              select count(*)::int as n from runs
+              where process = ${key} and status = 'failed'
+                and input_summary->>'kind' = 'event'
+                and input_summary->>'seq' = ${event.seq.toString()}`
+          )[0]!["n"] as number;
+          if (attempts < eventMaxAttempts) {
+            console.error(
+              `${key} failed on event ${event.seq} (attempt ${attempts}/${eventMaxAttempts}), ` +
+                `will retry: ${message}`,
+            );
+            break catchup; // leave the checkpoint; retry next pass
+          }
+          console.error(
+            `${key} failed on event ${event.seq} ${eventMaxAttempts} times, skipping it: ${message}`,
+          );
+          // fall through to advance the checkpoint past the poison event
+        }
         await sql`
           update checkpoints set last_seq = ${event.seq.toString()}, updated_at = now()
           where process = ${key}`;

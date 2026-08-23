@@ -337,12 +337,21 @@ async function cmdDaemon(): Promise<void> {
     }
     console.log("worker daemon running (folds, event reactors, cron, jobs); ctrl-c to stop");
     while (true) {
-      await catchUpFolds(sql, coreRegistry, folds);
-      await catchUpEventReactors(sql, coreRegistry, reactors);
-      await enqueueDueCronJobs(sql, reactors);
-      // One job per pass, so folds catch up between jobs (a judging job
-      // enqueued after an ingest job then sees the ingested papers).
-      await processPendingJobs(sql, coreRegistry, reactors, 1);
+      // Backstop: one bad pass (a transient DB error, an unexpected throw)
+      // logs and waits rather than killing the daemon into a restart loop.
+      try {
+        await catchUpFolds(sql, coreRegistry, folds);
+        await catchUpEventReactors(sql, coreRegistry, reactors);
+        await enqueueDueCronJobs(sql, reactors);
+        // One job per pass, so folds catch up between jobs (a judging job
+        // enqueued after an ingest job then sees the ingested papers).
+        await processPendingJobs(sql, coreRegistry, reactors, 1);
+      } catch (error) {
+        console.error(
+          `daemon pass failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        await sleep(10_000);
+      }
       await sleep(2000);
     }
   });
