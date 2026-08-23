@@ -2,12 +2,12 @@ import { paperpileItemImportedV1 } from "@nc/schema";
 import { jsonb } from "@nc/log";
 import type { Fold } from "@nc/process";
 import { entityId } from "./ids.js";
-import { libraryItemEntity } from "./graph.js";
+import { libraryItemEntity, normalizeArxivId } from "./graph.js";
 
 export const libraryFold: Fold = {
   kind: "fold",
   name: "library",
-  version: 2,
+  version: 3,
   consumes: ["paperpile.item.imported"],
   tables: ["library_items"],
   async init(tx) {
@@ -41,7 +41,8 @@ export const libraryFold: Fold = {
       values (${item.paperpileId}, ${entityId(target.kind, target.ref)}, ${item.title},
               ${item.abstract ?? null},
               ${jsonb(tx, item.authors)}, ${item.pubtype}, ${item.year ?? null},
-              ${item.arxivId ?? null}, ${item.doi?.toLowerCase() ?? null},
+              ${item.arxivId === undefined ? null : normalizeArxivId(item.arxivId)},
+              ${item.doi?.toLowerCase() ?? null},
               ${item.url ?? null}, ${item.journal ?? null},
               ${item.folders === undefined ? null : jsonb(tx, item.folders)},
               ${item.addedAt}, ${event.seq.toString()})

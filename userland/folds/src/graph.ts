@@ -22,8 +22,13 @@ export function personRef(name: string): string {
   return `author:${normalizeName(name).toLowerCase()}`;
 }
 
+/** Some sources store versioned ids ("2205.01068v1"); identity is unversioned. */
+export function normalizeArxivId(id: string): string {
+  return id.replace(/v\d+$/, "");
+}
+
 export function paperRef(arxivId: string): string {
-  return `arxiv:${arxivId}`;
+  return `arxiv:${normalizeArxivId(arxivId)}`;
 }
 
 const scholarlyPubtypes = new Set([
@@ -43,7 +48,7 @@ export function libraryItemEntity(
 ): { kind: string; ref: string } {
   const kind = scholarlyPubtypes.has(item.pubtype) ? "paper" : "resource";
   if (item.arxivId !== undefined) {
-    return { kind: "paper", ref: paperRef(item.arxivId) };
+    return { kind: "paper", ref: paperRef(item.arxivId) }; // paperRef normalizes versions
   }
   if (item.doi !== undefined) {
     return { kind, ref: `doi:${item.doi.toLowerCase()}` };
@@ -109,7 +114,7 @@ async function ensureLink(
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 3,
+  version: 4,
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",
@@ -203,7 +208,7 @@ export const graphFold: Fold = {
       if (item.arxivId !== undefined) {
         await tx`
           insert into identifiers (scheme, value, entity_id, asserted_by)
-          values ('arxiv_id', ${item.arxivId}, ${entity}, ${event.source})
+          values ('arxiv_id', ${normalizeArxivId(item.arxivId)}, ${entity}, ${event.source})
           on conflict (scheme, value) do nothing`;
       }
       if (item.doi !== undefined) {

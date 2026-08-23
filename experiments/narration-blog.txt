@@ -1,0 +1,370 @@
+H-Nets — the Past. A blog post by Albert Gu, from the Goomba Lab blog, 2025.
+
+This post is part of a two-part series.
+ H-Nets: the Past
+ H-Nets: the Future
+
+ The H-Net model has been a dream of mine for years. I’ve been fortunate enough to be able to work with my student Sukjun Hwang who made the technical breakthroughs behind this model, solving (or at least making serious progress towards) what I consider to be a very difficult but foundational problem for deep learning.
+ In this post, I provide an informal personal recounting of the motivation and history of this project, adding various context and discussion that wouldn’t make sense in a paper. This post is really just for fun; I’ve always found it interesting to read about the windy history of research instead of just the streamlined final result, and I felt like telling this story.
+ In the next post H-Nets (the Future), I’ll explain why I think this model is so important and a variety of potential downstream implications.
+ This series of posts can also be seen as a followup to my previous post on the tradeoffs of SSMs and Transformers, which may help contextualize this model.
+
+Hierarchy is Everywhere.
+
+ The idea of hierarchy has always resonated with me. Perhaps its comes from my penchant for discrete math and roots in competitive programming, where I spent all day working with algorithms on trees, the canonical hierarchical structure. Perhaps it reflects the way I tend to think; I structure almost everything hierarchically, for example using bulleted outlines for everything to a perhaps excessive degree (I’d write papers in outline format if I could!).
+ At some point early in my PhD, when I wasn’t doing much productive work, I took an online class for fun called Learning How to Learn. I think this is where I came across the concept of chunking in human cognition, which really resonated with me and felt fundamental to intelligence. For example, our processing is strongly hierarchical: language is parsed into words, phrases, clauses, sentences, and beyond; perception is organized into objects and events; tasks are decomposed into subtasks and goals. Raw streams of thought are chunked into abstractions and ideas. The chunking concept seemed really important to me, and later became adopted for this project’s terminology.
+
+Hierarchical RNNs.
+
+ From the very beginning of my work on sequence models, I was drawn to hierarchical models.
+ My first exposure to sequence models came during an internship in 2019 at DeepMind under the amazing Caglar Gulcehre and Nando de Freitas. I started thinking about RNNs with help from Caglar, who was an encyclopedia of classical sequence models (e.g. he was on the original GRU paper ) and pointed me to a lot of interesting ideas.
+ I was particularly interested in the idea of improving long-range dependencies through hierarchies. This had been attempted in many flavors of older RNNs, such as the Clockwork RNN, Hierarchical Multiscale RNN, and Dilated RNN. I played around with tons of ideas on incorporating hierarchies into RNNs; I particularly liked the idea of the Ordered Neuron LSTM (ICLR 2019 best paper!), which introduced a clever mechanism to incorporate an implicit hierarchy in the forget/input gates of an LSTM. My first ever paper on sequence models was heavily inspired by this paper (as well as by Chrono LSTM, which inspired me to think of RNNs as continuous systems and led to a lot of my work on state space models – but that’s another story).
+
+S4 and SaShiMi.
+
+ After DeepMind, my research switched completely to sequence models, and I started developing state space models from HIPPO to LSSL to S4, which was my breakout paper and the culmination of my PhD. A little known fact (I’m guessing) about the S4 paper is that I actually introduced a hierarchical architecture in one of the experiments!
+
+Autoregressive U-Nets for image modeling.
+
+ In this paper, we tested S4’s autoregressive modeling ability on a variety of distributions: on the left is the CIFAR-10 density estimation problem, and on the right is language modeling on WikiText-103 (at the time a popular dataset, but far too small scale now).
+ To improve the pixel modeling problem performance, I actually introduced an autoregressive U-Net structure that had two stages of downsampling. The overall structure of this model, such as the fixed-width pooling and how to preserve causality for the autoregressive sampling, is very similar to a bunch of models that have since been used for language (such as Hourglass Transformer, MegaByte, Block Transformer, and a few others).
+ As far as I’m aware, this paper (concurrently with Hourglass Transformer, submitted to arXiv just 5 days apart and with nearly identical architectures!) might have been the first to actually use an autoregressive U-Net? Although it’s not particularly complicated, so I wouldn’t be surprised if there were some earlier ones I missed.
+
+U-Nets don't work for language.
+
+ Something not reported in the paper, though, was that I tried the same backbone on the WikiText-103 language modeling experiments as well. I really wanted it to work, since I felt like hierarchy should be important! But no matter what I did, the hierarchical version was always noticeably worse than the isotropic backbone for language modeling.
+ I eventually gave up on this, and I think it formed the basis for some of my intuition around language modeling. In particular, I realized that fixed-width pooling just didn’t make sense for language. (And moreover, I realized that this is essentially the same as convolutions, or at least has the same inductive bias, and this helped form the basis of my hypothesis about how convolutions don’t work for language modeling or more general “discrete data” that has variable spacing. See this part of my Tradeoffs post for a bit more discussion.)
+ To be honest, I don’t really understand how so many papers on this U-Net-like strategy have been published for language modeling. I’m pretty skeptical that they work at all, as has also been shown in ablations by follow-up works on byte-level language modeling like SpaceByte and BLT (and we also reproduced this ablation in the H-Net paper). I guess one major difference is that all of those papers were using Transformers, which is much better for language than S4, but I still don’t think it really makes sense 🤷.
+
+But they work great for audio!.
+
+ Instead, I realized that S4 and U-Nets (and convolutions in general) have a great inductive bias for data that has an underlying notion of uniform sampling rate, namely perceptual modalities like audio, images, and video. So Karan took this autoregressive U-Net backbone with S4 layers and applied it to modeling/generating raw audio waveforms, where it worked really well!
+
+A Differentiable Chunking Mechanism?.
+
+ Around 2022-2023, I was idly thinking about hierarchies in the back of my mind, and the way I conceptualized the goal was something like this.
+
+Attention as a primitive.
+
+ To me the self-attention mechanism could be phrased as: A basic module that captures the “primitive” of forming dense connections and building functions on sets. What makes it powerful is that it feels simple and foundational - capturing some fundamental transformation in a simple differentiable way that allows it to be scaled.
+ My research is always after these primitives: lower-level building blocks that capture fundamental properties and transformations, and can be flexibly applied and scaled. The work I did for years on RNNs and state space models, for example, is really about fleshing out the primitive of recurrence, which I also do view as being a fundamental property of the world. (It’s probably not a very well-known fact that my academic job talk was not about SSMs per se; it was called New Structured Primitives for Machine Learning!)
+
+Chunking as a primitive.
+
+ I thought that chunking was another such fundamental primitive. I thought: would it be possible to invent a simple differentiable building block that encapsulated the idea of chunking? Based on my experience with language modeling, and my overall priors about the world, I felt like this would be an incredibly powerful module that would allow models to organize raw data into more meaningful units. Surely this was a more appropriate way of modeling language and much more!
+
+Tokenization as a case study.
+
+ Back then, I had already formulated tokenization as a major problem that I wanted to solve. The first reason is, as I explained in my previous blog, an appeal to aesthetics and generality, which to me felt important enough. But the more specific reason was that I felt that the proper way to solve tokenization would be through creating a differentiable chunking mechanism, which would be so much more powerful. It could be used on any data, and recursed to develop a hierarchy of abstractions. This is still the way that I like to pitch the problem now, as some researchers that have talked to me directly might know from the way I hinted at the H-Net project over the last few months.
+ Overcoming tokenization is not about tokenizers, but about learning abstractions. Discovering a tool that can do this will unlock new capabilities.
+
+Stuck.
+
+ At this point, tokenization and chunking became one of my personal “holy grail” problems. But how can one create such a differentiable chunking primitive? Grouping discrete units of data together is, of course, a discrete selection problem, which is generally very hard for differentiable optimization. Unfortunately, I had absolutely no idea how to do this. So this was always just an idle thought in the back of my head, and I never actively worked on it.
+
+Information-based Chunking.
+
+ In 2024, I started idly thinking about this again; maybe partly motivated by Cartesia ’s focus on audio, where it seemed like differentiable chunking could be very useful.
+
+Total information content as a chunking strategy.
+
+ I finally had an idea for how to do this: I still didn’t know how to make this process differentiable, but at the very least, perhaps we could come up with some smart general principles for what chunks should look like. It seemed like the key for a chunk to be “meaningful” is that it should have a certain amount of “information” in it. And there’s an easy proxy to create such constant-information chunks: Simply train a neural network to model the information content of the data (which can be read off of the conditional distributions of a standard autoregressive model, of course) and use that to segment the data, by grouping tokens together until the total negative log-likelihood of that chunk overflowed some threshold. This intuitively had a number of desirable properties, such as
+ if there were a lot of low-information tokens that are very easy to predict, then there probably isn’t valuable meaning to them, so they should all be grouped together;
+ if the model is surprised by the next token (such as the beginning of a word, which generally has higher entropy and intrinsic information), then the model would be forced to draw a boundary and start the next chunk, which ideally represented a new unit of meaning.
+ (Fast-forwarding a bit: in H-Net, we don’t completely understand where and why it decides to draw chunk boundaries, but we did notice a connection to this uncertainty principle; it tends to draw boundaries when surprised. But that’s the subject for a future post.)
+
+The project begins.
+
+ About a year ago, in summer 2024, I gave a research talk (an early version of my [ Tradeoffs blog post ]) to my academic lab at CMU and highlighted some key problems and approaches that I thought could be important. Solving tokenization and finding a way to create hierarchical models that fit the natural information of the data was one such problem, and I pitched the above approach as a concrete direction to get started.
+ Some students got interested and started thinking about this. I was still very, very interested in the above approach about information-based chunking; Ricardo Buitrago explored it a little bit but didn’t get too far as he started working on another project on length generalization in recurrent models (I’m also very fond of this result!). I kept trying to get Sukjun to try this approach as well, which I was convinced was a good idea…
+
+Differentiable Selection with Modern Techniques.
+
+ Fortunately, Sukjun refused to listen to me because he had a much better idea! (A recurring theme in this project…)
+ He wanted to try something loosely inspired by mixture-of-experts (MoE), the idea being that MoE (where each token gets “routed” to a fixed set of k “experts”) is essentially a discrete selection problem like the one we want to solve.
+ The main advantage of this approach is that it provides some hope for building a differentiable chunking mechanism in an end-to-end model, unlike my information-based heuristic which would require training a separate proxy model first. At the time, I actually basically didn’t know anything at all about how MoE worked, so I left Sukjun to his own devices for a long time, and he got the main ideas working relatively quickly. But there were a lot of really confusing training behaviors and instabilities, so he spent a long time building intuition and slowly improving the model.
+ Incidentally, it’s kind of interesting to me how obvious in hindsight, but not in foresight, the main idea is. As this project developed, and I told a bunch of people about it, their reaction usually went from “this differentiable selection problem seems impossible” to “oh yeah that might work” as soon as I mentioned the connection to MoE being another variant of a discrete-selection problem. (But as we’ll see, it’s much harder than just straight up applying MoE!)
+
+ Found some random whiteboard pictures from late 2024. Looks like on the left we were trying to figure out how to improve signal propagation into the router weights, including trying techniques like norm layers, straight-through estimator, and Gumbel noise. On the right we had just added the per-network norms idea from the paper and also had to properly rescale the initialization of each layer accordingly to balance (I just realized we might have forgotten to report this in the paper; there were so many details to get right, although all motivated by first principles). We were also trying a different idea of injecting a fresh set of input embeddings after the main network instead of using a residual; this was more stable and helped us get early versions working, but didn't allow multi-stage recursive chunking, one of my core goals of the model, so it was abandoned relatively quickly.
+
+Discovering Prior and Concurrent Works.
+
+ When we started this project, we hadn’t done a very serious literature search attempt because there are incredibly few papers on this topic – I guess it’s a pretty hard problem after all. Over the course of the project, we discovered two related works that were most directly related, and I expect we’ll get plenty of questions about how they compare.
+
+Hourglass and Dynamic Pooling Transformer.
+
+ Around late October 2024, we discovered the Dynamic Pooling Transformer (DPT) (and its prior work, the Hourglass Transformer, which introduced an autoregressive U-Net structure concurrently with S4/SaShiMi). To the best of our knowledge, the DPT is the first, and I think essentially only, prior attempt at building an end-to-end hierarchical autoregressive model with dynamic chunking. The overall network structure was a similar autoregressive U-Net as Hourglass, the main difference being the incorporation of a binary-valued boundary predictor that tries to learn where to chunk the data. This was very similar to Sukjun’s idea, but he called it a router (inspired by MoE terminology).
+ Their motivation for how to overcome the discrete-choice problem was delegating to stochastic reparametrization techniques, namely the Gumbel-softmax trick. In their paper, this fully end-to-end version seemed promising but not perfect; it had stability issues and underperformed their alternative variants that relied on more heuristics and supervision. Ultimately, I guess that DPT attempted to tackle this problem somewhat prematurely and important ideas weren’t available yet (for example, the most popular Switch Transformer MoE method was pretty new and perhaps not as established yet; neither was Mamba, which we found to be quite important). But I think this paper deserves more credit for at least making a real attempt at this problem!
+ Actually, before we found this paper we had tried many variations of Gumbel noise already; I’m rather fond of the Gumbel-softmax trick myself and kept trying to get Sukjun to incorporate it. But it never seemed to help empirically 🥲
+ A missed naming opportunity Just for fun, I’ll mention an earlier working name for the model I considered.
+ I think Hourglass is an aesthetically pleasing name, and also elegantly describes the characteristic shape of the architecture; it’s essentially equivalent to a U-Net, but refers to the actual tensor shapes (gradually shrinking and then expanding the sequence, like an hourglass figure) instead of the abstract downsampling/upsampling flowchart.
+ I thought about calling our model the Hourglass Network (shortened to H-Net), and the inner dynamic chunking module the TickTok layer. I really liked this name because there are several layers of meaning to it:
+ Hourglass still refers to the shape of the hierarchical network. (Calling it “Network” also differentiates it from the Hourglass Transformer, I suppose, since one of our important details was using SSMs in the outer layers.)
+ The network structure could be viewed as multi-rate sequence modeling involving modalities or streams of data that tick at different rates, such as characters vs. words, or audio vs. phonemes. The Tick Tok layer would be the interface between these modalities.
+ The network could also be viewed as performing a form of dynamic tok enization that compresses contiguous inputs just as tokenizers do. The Tick Tok layer would again be the mechanism that performs this compression. ( Dynamic tokenization, instead of dynamic chunking, was also the working name for this project for a long time.)
+ Finally, there’s a time -related theme to all of it: Hourglass Networks would be defined as models that have temporally-dynamic downsampling rates, where the core mechanism is the “tick tock” layer.
+ Unfortunately, I was a bit concerned about the name “Hourglass” being confused for parallel lineages of work; it’s also been used by plenty of other unrelated models. “TickTok” might also have been a little cheesy; and the TikTok name is also of course a well-recognized brand that might be confusing, and has also already been used by a very popular tokenizer. So we didn’t go with it. Alas 🥲
+ (I still liked the H-Net name, so we kept it and later “backronymed” it to Hierarchical Network. In my head I still like the name H-Net for this Hourglass connection though.)
+
+Byte Latent Transformer (BLT).
+
+ By December, we had made a lot of progress and pretty much had the main architecture done (in particular, Sukjun had come up with the smoothing module which at the time we were calling the “EMA detokenizer”; as we show in the paper’s ablations, this was one of the most important new techniques introduced).
+ At this point, the Byte Latent Transformer (BLT) paper came out, which made a big splash for claiming to solve tokenization end-to-end, through a similar hierarchical architecture using an entropy-based segmentation rule. (Actually, DPT above already proposed similar entropy heuristics, but BLT executed it better.) I think the terminology is a little confusing because they indeed built a model operating “end-to-end” on bytes, but to me, the crux of the problem is learning the dynamic boundaries jointly with the model itself. This is not possible (at least not obviously) with the entropy heuristic and is the main reason why we didn’t explore this approach. In the H-Net paper, we specifically use “end-to-end” to refer to the stronger definition. Still, it was gratifying to see that my idea to use information-based chunking heuristics does (somewhat) work!
+ A deeper dive into this approach There is one major difference between the original idea I had and what BLT did. Since I’m not going to work on this approach, I might as well put it here.
+ In my idea, although I also think of it as an “entropy-based approach”, the actual quantity used to determine chunk boundaries is the information content or negative log-likelihood of the next token. In BLT, the quantity used is the conditional entropy H(x t | x 0,.., x t-1).
+ The intuition in both is that segmentations should happen if the model is “surprised” by the next token, or if the current chunk has “enough information”. But surprise/information is better measured by the former quantity, not the latter! A concrete example is any conditional distribution that puts most of its mass on one vocab word w; this conditional distribution would have very low conditional entropy and so any entropy-based heuristic would never create a new chunk. But in the rare event that the actual next word is a different word (expression), the model should be very surprised and draw a boundary. The negative log-likelihood captures this actual information content.
+ I’m a little confused by why both DPT and BLT used the conditional entropy instead. Maybe I’m missing something, or for some reason empirically it just works better?
+ H-Net vs. BLT We expected to get a lot of questions about BLT since it’s currently the most well-known tokenizer-free method; and indeed after releasing H-Net we have already gotten a lot of questions about the comparison. So I decided to add this note just to have a place to point to for those asking for a direct comparison, although it’s out of the way of the main story. I’ll be pretty explicit here – but very happy to be corrected by the authors (or anyone else) if I say anything incorrect!
+ tl;dr
+ BLT is not actually end-to-end
+ H-Net should both be easier to use and perform better than BLT
+ We can roughly factor the overall design of this family of hierarchical models into two parts: (1) the chunking strategy (2) the architecture.
+
+Chunking.
+
+ The chunking strategy is the core, and is the focus of both of these papers. The main advantage of H-Net is that it’s actually end-to-end, able to learn the chunking strategy together with the model.
+ Additionally, the entropy-based approach of BLT has some intrinsic weaknesses:
+ It requires significant extra work (to train an auxiliary conditional entropy model).
+ It can’t be nested into deeper hierarchies, which was one of the core motivations of H-Net and we showed significantly improved performance: in all our experiments, we found H-Net (2-stage) > H-Net (1-stage).
+ In the H-Net paper, we used SpaceByte as a baseline instead. Instead of an entropy heuristic, SpaceByte simply chunks on certain delimiters in the text such as spaces. For languages like English, we believe that SpaceByte performs quite comparably to the entropy chunking strategy of BLT. Some evidence of this is Figure 6 of the BLT paper itself.
+
+ On the left, BLT Space is much better than SpaceByte, showing the effect of BLT's architectural changes. (H-Net shows similar ablations, called "SpaceByte" vs. "SpaceByte++" vs. "H-Net (space)".) In terms of the core dynamic chunking mechanism, BLT Space looks pretty much on par with (or very close to) BLT Entropy.
+ Note that the advantage of BLT over SpaceByte is that the entropy strategy is more flexible: it can be applied to languages without delimiter-based segmentation strategies, or potentially even non-discrete sequences of data. However, it’s still strictly less flexible than the dynamic chunking (DC) mechanism of H-Net. The only advantage I can think of for entropy/information-based chunking is that perhaps it could be easier to prove certain flavors of theory for tokenization?
+
+Architecture.
+
+ The architectural components of the models are generally orthogonal to the chunking strategy. BLT introduced a number of unique components, such as a new type of chunk-aware cross-attention layer, and large tables of “hash n-gram embeddings”. We think both of these are not necessary; H-Net works just fine without these additional techniques, although I believe that they could also be incorporated into H-Net if desired.
+ So overall, we felt that the full BLT model is an overly complicated baseline to set up and compare against, and (as explained in the paper) we used SpaceByte as a representative example of BLT-like models. But I still like the idea of BLT and I’m glad it’s published!
+
+A World of Improvements.
+
+ I think the architecture has been relatively stable since early 2025, but we spent a long time trying to understand and simplify every part of it. For example (this is just a small subset),
+ Architecture components: our final architecture included post-norm layers at the end of every sub-network, as well as linear projections on the residual connection. We spent a long time trying to remove these since I felt like they were non-standard techniques (most U-Nets don’t have these) that complicated the model. But in the end, they seem very useful—maybe essential—and we kept them.
+ Sparsity auxiliary loss: Our auxiliary loss targets a specific down-sampling ratio. This seems a little artificial to me and introduces an annoying new hyperparameter (thankfully, the only one!). I felt like it would be cleaner to simply impose a “sparsity loss” that encouraged higher compression rates (it would be counter-balanced by the main loss function which encourages more compute, hence lower compression rates). We found some things that sort of worked but it didn’t seem as consistent, so for this version of the H-Net we kept the targeted “ratio loss”.
+ Chunking mechanisms: We tried so many different variations of the routing module, upsampling step, downsampling step, smoothing module, and every other component. Sukjun’s PowerPoint deck of ideas and variations has hundreds of slides, and we were only able to report a very small subset of ablations in the paper of things we did.
+ Layer allocation: Normal LLM scaling laws might be concerned with how to scale the width and depth of the model as the parameter count grows. But here, there are so many more choices for how many layers to put in each sub-network and how wide to make them and so on. Beyond that, the question of which layers to use (e.g. Transformer vs. Mamba) in each network is also not obvious, and required tons of experiments to understand (and I’m still not sure we have a completely clear grasp of how they predictably affect performance).
+ Although our final (current) design has a lot of moving parts, they all had concrete motivations, and are as simple as we could make it without sacrificing stability or performance.
+ I haven’t been able to run experiments personally in a while, and it was like watching an artist at work to see Sukjun improve the architecture steadily over time with multiple creative and essential ideas. I have to say that this was one of the most difficult empirical projects I’ve witnessed (and I think I’m somewhat decent at creating architectures 👀). Normally when tuning models, one hopes that different axes of variation act somewhat independently so they can be ablated in isolation and we can perform a “coordinate descent in design space”. But somehow for this architecture, it felt like there were 12 different axes that were all critical and that all had to interact together in exactly the right way. There were so many times when we thought that option “A” was better than “B”, before changing some other design decisions and flip-flopping to B, before changing even more things and going back to A. And this happened with every axis of variation. Even after we had all the main ingredients, it was really difficult to get them to interact together seamlessly. But eventually it all came together, thanks to Sukjun’s intuition and persistence.
+
+Tradeoffs of SSMs and Transformers.
+
+ In my previous blog post, I argued that we as a community should care about getting rid of tokenization. I hope the H-Net has done that, or at least shown the first step that it’s possible. Aside from that, there are a couple of points in the previous post that I’ll specifically call back to.
+
+Noisy data.
+
+ I proposed [ a hypothetical litmus test ] involving sequences padded with information-less noise tokens. This was a thought experiment that partially motivated why I was so interested in hierarchical models. The idea is that one should be able to train some lightweight encoder and decoder networks that perform the compression of each chunk, folding each contiguous run of noise tokens into the previous meaningful token. This should be able to compress and strip away the noise tokens before feeding it to a main network that operates just over the meaningful tokens.
+ Can the H-Net actually solve this in practice? I don’t know, maybe some more work would need to be done. I was more interested in the litmus test as a thought experiment to guide architecture design, not necessarily as an actual synthetic task. I did hypothesize though that something that could theoretically solve the litmus test might be better at working with noisier data, but I’d say I don’t have particularly high confidence in this hypothesis (I really don’t know).
+
+SSMs as compressive models.
+
+ Finally, let me show perhaps my favorite experiment from the paper, even though this is buried somewhere late in the ablations because it’s subtle.
+ In the previous post, I asked the question: [ Is compression a bug, or a feature? ] And I floated the idea that perhaps SSMs had hidden strengths due to their compressive abilities.
+ The more obvious piece of evidence I gave for this was comparing the inductive bias of SSMs and Transformers, for example, by contrasting these two facts:
+ Transformers and SSMs have similar performance on tokenized language (with caveats)
+ Transformers seriously underperform SSMs on untokenized language
+ My intuitive explanation was that on high-resolution data without meaning (such as characters), attention is a poor inductive bias, and understanding the data requires compressing it. Ablations in the H-Net paper corroborate this: any parts of the model interacting directly with byte-level resolution strongly benefit from SSM layers.
+ This raises a natural question though: is the importance of Mamba layers because
+ they are simply better at processing fine-grained byte inputs, as we already knew?
+ or because they are better for compressing information into the next stage, even if given coarser inputs?
+ We can disentangle these two hypotheses by simply applying an H-Net on data that’s not byte-level. After all, it’s just a generic sequence model architecture that can be applied on any data! In particular, let’s apply it to data that’s already BPE-tokenized.
+ If the first hypothesis holds, then we would expect Mamba to not help in the encoder/decoder, since (as mentioned above) it has similar performance to Transformers on standard tokenized language modeling.
+ If the second hypothesis holds, then we would expect that encoders/decoders using some Mamba layers to be better than pure Transformer layers.
+ This figure shows that it’s indeed the second hypothesis that holds. This is really interesting and to me provides serious evidence that SSMs really are doing something interesting that other models can’t do, and that perhaps compression is fundamental to intelligence.
+
+The Future.
+
+ There’s a ton of stuff we could do and ideas that we have that we left on the table. A bunch of questions are pointed out in the Discussions section of the paper, and in my next post, although this is only a subset of the wide range of follow-up directions that I think will be interesting to work on.
+ One question that I expect we’ll get is: do H-Nets actually scale better? In the paper, we showed training loss curves, where they display a striking trend of seeming to scale better with data. We use these as proxies for a qualitative assessment of their performance, which I do believe is valuable (a justification is in the Discussion section of the paper). For various reasons I also actually believe that H-Nets will shift the scaling law curve in a non-trivial way (still considering writing a follow-up blog post about this…). However, what we did aren’t formal scaling laws.
+ Why didn’t we do those? Well, I guess the main reason is limited compute and more so the sheer difficulty of developing this model, which is where all our resources were invested. At no point did it seem worth completely freezing the architecture to run out expensive formal scaling laws, when I think we were able to get an intuitive understanding of its behavior from our proxy protocol; and moreover, when it always seems like there are core questions we don’t understand and low-hanging improvements to make to the model.
+
+ On a similar note, I realized we should have just ran this out for much more data to see if the gap widens 🤦🏻 We didn't because we only ran things out enough to follow our protocols and provide signal to improving the model.
+ We have a lot of ideas for where to go from here; I’ll touch on some of these in the next post.
+
+Next post: H-Nets — the Future. Also by Albert Gu, from the Goomba Lab blog, 2025.
+
+This post is part of a two-part series.
+ H-Nets: the Past
+ H-Nets: the Future
+
+ In this post, I’m going to try to convince you why H-Nets are fundamental and important. There was only so much content that could make it to the paper, and I think there are a lot of downstream consequences and interesting technical connections that we didn’t cover. Much of this will be based on deeper (but mostly unvalidated) intuitions I have and speculative implications about H-Nets. For fun, I’ll formulate several concrete hypotheses and predictions about the future of this research direction – these are personal takes that aren’t meant to be calibrated or taken super seriously, but does crystallize what I think might be some important directions for the field.
+
+Direct Applications.
+
+ Let me first say that by “H-Net”, I don’t necessarily mean our exact model, but the concept we introduced and our general definition of H-Nets: end-to-end hierarchical networks with data-dependent, dynamic segmentation strategies.
+
+Alternative languages and modalities.
+
+ The biggest use case of H-Net is, of course, languages and modalities that don’t have obvious syntactic boundaries for meaningful chunking of the data. (In contrast, the white spaces of English are heavily used in modern LM pipelines, namely through being hacked into the tokenization pipeline.) This means they have much weaker tokenizers that should strongly benefit from using H-Net, which ideally would discover better chunking boundaries.
+ Indeed, the most striking results in our paper are for non-English languages. We showed that on both Chinese and code, H-Net scales much, much better than the standard tokenized language model. I imagine these results should hold for many other distributions, including math (as shown in the SpaceByte paper ) as well as most human languages. The linguists have done a much better job than us of explaining how broken tokenization is for certain languages.
+ Other types of sequential data such as scientific modalities are hungry for new architectures because the standard Transformer isn’t enough (as touched on in my previous blog post ).
+ Out of all the experiments we did in this paper, the DNA results seemed perhaps the most striking in terms of the improvement over standard architectures.
+ I think this most directly validates the power of hierarchical modeling, as the baselines here are also operating on single base pair (non-tokenized) resolution. On data that isn’t pre-compressed by tokenizers, applying an end-to-end model that tries to learn hierarchical patterns from data seems like a free win!
+ I’ll also mention that we didn’t spend too much time on DNA and never tried iterating the H-Net to 2-stages. It might just get better for free, just like for language?
+
+Hypothesis.
+
+ H-Nets will immediately be adopted for sequence modalities with unusual characteristics, like tail languages and genomics.
+
+ A final type of application that H-Net could unlock is allowing “tokenization” of continuous-valued sequences. The concept of tokenization as applied to language models is predicated on discrete vocabularies – the process involves explicitly constructing new vocab words from existing ones. So it’s not applicable directly to non-discrete data like audio and video, even though those modalities seem like they should benefit from a form of dynamic compression (in time) as well! On the other hand, H-Nets are applicable to continuous-valued input sequences and can in principle chunk them in time, ideally grouping meaningful units like the role of tokenization in language. This can potentially be used to perform alignment problems (e.g. audio to phoneme) or just compress away redundancies (e.g. silence spans of audio or motionless video).
+
+Hypothesis.
+
+ H-Nets will be useful for audio and video, but may require more research.
+
+Multimodal alignment.
+
+ Speaking of different modalities, so far I’ve only talked about training models on a single modality at a time. The power of dynamic chunking will be even more important when moving to multimodal models that fuse different streams of data together.
+ In particular, multimodal streams with temporal mismatch (e.g. text and audio) are difficult to synchronize. For example, language is currently tokenized into subwords, while audio is tokenized as raw waveforms or downsampled codecs, making them difficult to model jointly. Learned chunking mechanisms provide a path to fuse multimodal streams “ticking” at different rates, unlocking native multi-channel multimodal models operating at a higher abstraction level and enabling better transfer, reasoning, and understanding across modalities.
+
+Hypothesis.
+
+ H-Nets will unlock multi-channel multimodal models with temporal fusion.
+
+Language (and reasoning).
+
+ Of course, the big question is how good this model really is for core language modeling, which is still at the heart of the most mainstream AI progress today. I’m personally very bullish on H-Nets – I wouldn’t have worked in this direction if not – but as always with architectural research, there are significant unknowns, risks, and barriers to adoption.
+ The main reasons I think they’ll improve language modeling has been laid out in the paper, but in a nutshell, the goal of H-Nets is to compress data into semantic units and operate over higher levels of abstraction. It’s currently not known to what extent they can successfully do this right now (but I think the scaling behavior we showed is evidence for it), but if possible, it should just allow for stronger models that are more capable of reasoning intelligently.
+
+Hypothesis.
+
+ H-Nets will have increased language modeling and reasoning abilities.
+
+ We didn’t formally run out true scaling laws in the paper, which would require sweeping over many more model sizes and compute horizons. But as I mentioned in the previous part, I have some reasons to believe that they will have better scaling (i.e. shift the scaling law curve by a non-trivial amount). I started writing this up but got tired 😆 but maybe I’ll follow this up with another blog post.
+ Given the importance of language and it being our main motivation for this model, the rest of this post will focus exclusively on language modeling intuitions.
+
+Efficiency and Engineering (and a Connection to Speculative Decoding).
+
+ One of the first things that gets asked about any new architecture is how efficient it is. Much of my prior architecture research has specifically focused on being more efficient than the status quo. In the H-Net paper, we basically didn’t touch on efficiency, so what can we say about this?
+
+The efficiency ↔ quality Pareto frontier.
+
+ Well, the simple reason why we didn’t is because the intuition behind our method (chunking) is more obviously connected to model quality rather than efficiency, so we focused on those aspects. But of course, what really matters is the interaction between efficiency and quality. This is generally monotone, leading to an entire Pareto frontier of performance tradeoffs. At a superficial level, I expect that the quality gains of H-Nets would directly translate to efficiency gains as well.
+ But there can often be more nuance to this with architecture research because of qualitative differences between models. What people want to know is whether there are qualitative structural characteristics in the architecture that directly relate to its efficiency. (This is what made SSMs so appealing, I suppose, as these characteristics – the constant state size – are very intuitive.)
+ This topic is a lot more subtle for H-Nets, but there are a few intriguing connections to highlight.
+
+Speculative decoding.
+
+ Let’s think about speculative decoding (specdec), which is by now a universally used technique for LLM inference.
+
+Speculative decoding resembles an H-Net.
+
+ Without getting too in the weeds, speculative decoding consists of a large model (usually called the “verification model”) that we want to sample from, and a small model (usually called the “draft model”) that’ll help us sample from it faster. The decoding process basically looks like this:
+ On every autoregressive step, the draft model will take a step to generate a new token.
+ Every few steps, the verification model will verify the small model’s sequence of tokens, accepting as many of them as it can.
+ At a high level, specdec improves generation speed by letting the large model only do a forward pass every few tokens. But this is incredibly similar to the decoding process of an H-Net!
+ The H-Net encoder/decoder networks take a step on every token.
+ The H-Net main network takes a step every few tokens (on every chunk ).
+
+Speculative decoding + H-Net is redundant.
+
+ One can take this a step further and ask: what happens if we combine speculative decoding to try to speed up an H-Net? In an idealized case of speculative decoding, what might happen is:
+ The small model (an auxiliary draft model) takes a few steps, say k, and proposes a number of tokens.
+ The large model (H-Net) does a forward pass on these k tokens. Suppose that k lines up with the next chunk: then this amounts to 1 parallel pass (over k tokens) of the H-Net’s encoder/decoder networks, and
+ just 1 standard decoding step of the H-Net’s main network.
+
+ Further suppose that the draft model has a similar network structure and size as the H-Net’s encoder/decoders. Then this is almost the same as the vanilla decoding process of an H-Net above, just with the sequential steps of the encoder/decoder swapped for sequential steps of an auxiliary draft model!
+ So this application of speculative decoding was pretty much a no-op in terms of improving efficiency.
+ Why is this? One way to interpret this is that the speculative decoding process is already baked into the H-Net structure, and once we move to H-Nets, we might not need inference techniques like specdec anymore.
+
+Entropy strikes again.
+
+ And there’s one final conceptual connection! Speculative decoding works because there’s some form of redundancy in token sequences that makes some of them easier to predict than others; the speedup happens exactly when there are small sequences of easy-to-predict tokens. Or put another way, when there are local strings of low-entropy or low-information tokens. But this is exactly one of the heuristics for how to think about dynamic hierarchical networks (as discussed in the previous post ) – they segment on surprising tokens, or more generally on some notion of information content in the data.
+ All in all, there are a lot of striking similarities between speculative decoding and H-Nets! My hypothesis is that: the H-Net structure implicitly subsumes the speculative decoding process.
+ What are the implications of this? Well, the obvious practical one is that despite seeming more complicated than standard models, H-Nets might not actually be much more complicated than modern LLM pipelines used in practice.
+
+Hypothesis.
+
+ H-Net inference engineering will have a similar complexity to current LLM inference pipelines. Furthermore, inference tricks will become marginally less and less useful (and ideally not be necessary at all), as they become subsumed by end-to-end models that incorporate the underlying concepts in a more natural way.
+
+ But to me, there’s a more important conceptual implication.
+ Much of architecture efficiency optimization consists of asking: Given this model, how can I make it faster?
+ One can flip this on its head and ask: Given that this model could be sped up, what does that imply about the original model? The way to think about this is that the very fact that standard LLMs can be sped up through tricks like speculative decoding means that the original models have redundancies and could be made more powerful to begin with.
+ The H-Net structure is exactly the way to smooth out those redundancies, baking (something akin to) the speculative decoding process directly into the model, while leveraging parameters and compute more effectively and training everything end-to-end. In other words, the structure of the H-Net preserves the same characteristics of the inference-optimized standard LM, but with a better training objective.
+ Thus, what I predict is that with optimized inference implementations for H-Nets, then for any target inference budget, an H-Net would be a stronger model than our current standard LLMs.
+
+Engineering challenges.
+
+ Okay, a lot of what I’ve talked about so far (and the way it’s implicitly described in the paper) is about theoretical efficiency; we considered FLOPs, not wall-clock time. A very important question is: is the theoretical efficiency realizable in practice?
+
+Training.
+
+ Training is more difficult than normal because sequences are dynamically subsampled, which causes load balance issues among other edge cases. Sukjun spent a while engineering our pipeline to be reasonably efficient by incorporating dynamic packing and such. Our current implementation is still a bit slower than isotropic models during training, but I expect to have substantial room for improvement. There has been a lot of work on mixture-of-experts (MoE) in the last few years, and I expect a lot of general ideas will transfer to H-Nets.
+
+Inference.
+
+ Inference has largely been discussed in relation to speculative decoding; I think it’s going to take some work, but don’t see any fundamental barriers.
+ Overall, engineering for H-Nets will be a substantial but surmountable problem for their adoption at scale.
+
+Hypothesis.
+
+ H-Nets will require non-trivial research and infrastructure work for both training and inference; on the order of what was needed for tokenizers, mixture-of-experts, and speculative decoding pipelines. This effort will be worth the tradeoff to achieve higher quality and less brittle end-to-end models.
+
+Revival of Architecture Research.
+
+ As multi-component pipelines are consolidated into end-to-end models, previous parts of the pipeline that required dedicated treatment will transform into added complexity in the model instead. Architectures will become somewhat more sophisticated and require new considerations and research. Here are a couple of such considerations.
+
+Hierarchical sequence models.
+
+ As I described in my own journey through sequence models, hierarchy is far from new.
+ There have been a few recent works that investigate hierarchical structures inside novel sequence model layers (i.e. variants of attention or SSMs). For example:
+ Native Sparse Attention (NSA) is a recent sparse attention model that performs a 2-stage process of aggregating information inside local blocks and then retrieving them.
+ Log-linear attention and prefix scannable models (PSM) introduce new hierarchical layers that generalize modern recurrent models using a binary tree of hierarchies, improving their expressivity by increasing the constant size state to logarithmic (in sequence length).
+ While these models are elegant exercises in algorithm design and engineering, and definitely valuable contributions to the community, I personally think there might be problems long-term with building hierarchy directly into the layer. The root cause is the difficulty of having a dynamic or flexible hierarchy, which also ties to hardware considerations.
+ In NSA, for example, there is a block size hyperparameter (set to 64 by default, I think) that governs the lower level of the hierarchy, motivated by hardware alignment. This doesn’t feel “right” to me for some reason. I guess it’s because I feel that while hardware considerations are important, they should be connected to the model algorithm rather than the model definition. For example, while Mamba-2 also has a block size hyperparameter (also set to 64 by default) related to the size of matrix multiplication tiles, this only affects its implementation/efficiency and not the definition of the model. In contrast, the block size hyperparameter of NSA fundamentally changes what functions (sequence transformations) it can represent.
+ As another example, the log-linear models are tied to a static binary tree hierarchy. But a major theme of the H-Net paper is that static hierarchies are not the right structure!
+
+Hypothesis.
+
+ The best way of building hierarchical models will be in the holistic architecture’s global network structure like H-Net, not in individual layers.
+
+ A future direction of H-Nets is to see how far the hierarchy can extend. For example, one can build a binary-tree-like architecture with repeated downsampling by a factor of roughly 2 (a controllable parameter in the H-Net), which leads to the same holistic properties as log-linear layers – linear-scaling computation in sequence length with logarithmic-scaling state size – but with a dynamic hierarchy. By carefully balancing the depth/widths of sub-networks as well, one can actually get very fine control over the scaling of both compute and state size, potentially targeting polynomial-scaling state sizes which is hypothesized to be optimal for language modeling. I’m quite interested in exploring this, let me know if you want to collaborate!
+
+Long context.
+
+ One question I have is whether deep hierarchies can actually allow one to completely get rid of global attention. What happens if one uses a deep recursive H-Net with pure constant-state-size layers like SSMs or sliding window attention (SWA)? In a normal isotropic model, these suffer on long sequences because they simply can’t encode enough information. But in a deep hierarchical model, information is constantly being compressed and abstracted, shrinking the sequence length and perhaps substantially improving the effectiveness of these layers.
+ Maybe some lightweight global attention will still be needed for certain retrieval abilities? But I think hierarchical structure can only help long context significantly (which is indeed an explicit motivation for many prior works on hierarchical sequence models!).
+
+Hypothesis.
+
+ H-Nets will substantially improve long context abilities.
+
+ We originally wanted to explore some long context benchmarks in the H-Net paper, but there were too many facets to show already so we didn’t get around to it. Hopefully someone will investigate this in the future!
+
+Hybrid models.
+
+ While hybrid models combining linear layers with quadratic attention have become much more popular, I always wondered if the simple interleaving strategies were the most natural way.
+ One nice thing about H-Nets is that they can hybridize linear and quadratic layers in a more elegant way, in my opinion. (In my head, another potential meaning of H-Net stands for hybrid network!) Linear layers go on the outside, both for efficiency and modeling reasons (as covered in my Tradeoffs post ), and powerful quadratic attention layers can go on the inside, operating over higher levels of abstraction where they are most suited.
+ However, figuring out the exact right combination of layers is pretty non-trivial. We did endless ablations over the course of this project (and included many of them in the paper, but that was only a small subset), and it was pretty hard to come to conclusive answers.
+ For example, these were the conclusions found for a 2-stage H-Net (three sequence lengths):
+ Outer: Pure Mamba layers perform best, and seem indispensable.
+ Middle: After the outer layers have shrunk the sequences by a reasonable length (almost 3 times ), this is much closer to tokenized language, and I wouldn’t have been surprised if pure Transformer layers were fine here. But we found that Mamba was still important, which validates that its effect is not just because it’s good at high resolution, but because it’s doing a form of active compression that benefits dynamic chunking.
+ Inner: The innermost model has the most parameters and is essentially a standard isotropic language model operating on coarsely tokenized data (but with better “tokens” that are dynamic and learned from data!). In the paper, we stuck to pure Transformers because that was our main baseline. However, this is completely orthogonal to the rest of the H-Net design; we did experiment a bit and did an ablation showing that general findings for LM architectures still transfer, such as that hybrid main networks (we tried 3-to-1 Mamba-to-Transformer) still have somewhat better perplexity!
+ At the very least, moving toward such hierarchical models will necessitate expanding the space of primitives used; I’m pretty sure standard attention is not sufficient.
+
+Hypothesis.
+
+ Linear sequence models such as state space models will become core primitives of language models, if only for acting as the byte-level interface.
+
+ In turn, research papers on such models should start incorporating byte-level language modeling as a standard evaluation.
+
+It’s the wild west!.
+
+ I have to emphasize again that creating the H-Net was a fiendishly difficult design problem, and we still don’t completely understand how a lot of things work. I wouldn’t be too surprised if someone came out next week with a simplification of our routing mechanism that was better (well, I’d be pretty surprised actually – but I do expect it to happen at some point). At any rate, there are so many new axes of variation, knobs to turn, and completely new directions to explore. Things are just getting started!
+
+Closing.
+
+ Let me return once again to the higher-level question: is all of this actually useful? Are hierarchical models the future?
+ In this post, I haven’t said anything that was actually technical or rigorous, only a loose set of connections and intuitions. But somehow to me these point to some type of deeper truth. Something about certain models just “feels right” to me, and H-Nets feel right.
+ Perhaps the most concrete answer I can give, though, can be summarized by just two points:
+ Hierarchical pipelines are already used everywhere, often implicitly.
+ Consolidating them into general, trainable methods is at the heart of AI ( The Bitter Lesson ).
+
+Observation.
+
+ Existing LLM pipelines are already implicitly hierarchical, such as (1) the core language model pipeline (tokenizer – language model) (2) the speculative decoding pipeline (draft model – verification model)
+
+Hypothesis.
+
+ As we get closer to finding “the right architecture”, these explicitly engineered pipelines will be subsumed by an end-to-end model. Maybe the H-Net?
+
+That concludes both posts.
