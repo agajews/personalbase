@@ -3,3 +3,4 @@ node_modules/
 .env.local
 *.tsbuildinfo
 dist/
+experiments/**/*.mp3
