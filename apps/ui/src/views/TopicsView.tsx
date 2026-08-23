@@ -39,19 +39,13 @@ function TopicIndex({ state }: { state: AppState | null }) {
         <BusyButton className="primary" onClick={() => api.classify(false).then(() => setTick((t) => t + 1))}>
           Classify new items
         </BusyButton>
-        <BusyButton
-          title="Discard the current scheme and derive a fresh one from all saved titles"
-          onClick={() => api.classify(true).then(() => setTick((t) => t + 1))}
-        >
-          Regenerate scheme
-        </BusyButton>
         {classifying && <span className="working">classifying…</span>}
       </div>
       {groups === null && <div className="empty">loading…</div>}
       {groups !== null && groups.length === 0 && (
         <div className="empty">
-          No scheme yet — "Regenerate scheme" has a model read every saved title and invent
-          topic groups for this collection.
+          No scheme yet — "Classify new items" has a model read every saved title, invent
+          topic groups for this collection, and assign each item.
         </div>
       )}
       {groups !== null && (
