@@ -24,13 +24,22 @@ import {
   papersFold,
   paperRef,
   personRef,
+  taxonomyFold,
 } from "@nc/folds";
 
 // The UI reads folds and appends events / enqueues jobs. It never runs
 // reactors — the worker daemon (local or Fly) picks jobs up through the
 // database. Fold catch-up here is safe alongside the daemon because the fold
 // runner takes a per-fold advisory lock.
-const folds = [papersFold, filtersFold, filterResultsFold, graphFold, libraryFold, marksFold];
+const folds = [
+  papersFold,
+  filtersFold,
+  filterResultsFold,
+  graphFold,
+  libraryFold,
+  marksFold,
+  taxonomyFold,
+];
 
 if (existsSync(".env")) {
   process.loadEnvFile(".env");
@@ -692,6 +701,81 @@ app.get("/api/marked/:mark", async (c) => {
       authors: r["authors"] ?? [],
     })),
   });
+});
+
+// ---- LLM taxonomy: topic groups over the saved library ----
+
+app.get("/api/topics", async (c) => {
+  const categories = await sql`
+    select slug, name, description, scheme_id from taxonomy_categories order by position`;
+  if (categories.length === 0) {
+    return c.json({ schemeId: null, groups: [] });
+  }
+  const schemeId = categories[0]!["scheme_id"];
+  const idToSlug = new Map(
+    categories.map((cat) => [entityId("topic", `taxonomy:${cat["slug"]}`), cat["slug"]]),
+  );
+  const counts = await sql`
+    select to_id, count(*)::int as n from links
+    where link_type = 'classified_as' and evidence->>'schemeId' = ${schemeId}
+      and to_id = any(${[...idToSlug.keys()]})
+    group by to_id`;
+  const countBySlug = new Map(counts.map((r) => [idToSlug.get(r["to_id"]), r["n"]]));
+  return c.json({
+    schemeId,
+    groups: categories.map((cat) => ({
+      slug: cat["slug"],
+      name: cat["name"],
+      description: cat["description"],
+      items: countBySlug.get(cat["slug"]) ?? 0,
+    })),
+  });
+});
+
+app.get("/api/topics/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  const category = (
+    await sql`select name, description, scheme_id from taxonomy_categories where slug = ${slug}`
+  )[0];
+  if (category === undefined) {
+    return c.json({ error: `no topic group ${slug}` }, 404);
+  }
+  const topicId = entityId("topic", `taxonomy:${slug}`);
+  const rows = await sql`
+    select l.confidence, e.entity_id, e.kind, e.display_name,
+           p.arxiv_id, m.mark
+    from links l
+    join entities e on e.entity_id = l.from_id
+    left join papers p on p.entity_id = e.entity_id
+    left join paper_marks m on m.entity_id = e.entity_id
+    where l.to_id = ${topicId} and l.link_type = 'classified_as'
+      and l.evidence->>'schemeId' = ${category["scheme_id"]}
+    order by l.confidence desc`;
+  return c.json({
+    slug,
+    name: category["name"],
+    description: category["description"],
+    items: rows.map((r) => ({
+      entityId: r["entity_id"],
+      kind: r["kind"],
+      title: r["display_name"],
+      arxivId: r["arxiv_id"],
+      mark: r["mark"],
+      confidence: Number(r["confidence"]),
+    })),
+  });
+});
+
+const classifyBody = z.object({ regenerate: z.boolean().optional() });
+
+app.post("/api/jobs/classify", async (c) => {
+  const body = classifyBody.parse(await c.req.json());
+  const jobId = await enqueueJob(
+    sql,
+    "reactor:taxonomy",
+    body.regenerate === true ? { regenerate: true } : {},
+  );
+  return c.json({ jobId });
 });
 
 const labsBody = z.object({ lab: z.string().optional() });

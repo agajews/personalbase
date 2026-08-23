@@ -49,3 +49,12 @@ export {
   libraryArxivBackfillReactor,
   makeLibraryArxivBackfillReactor,
 } from "./libraryBackfill.js";
+export {
+  taxonomyReactor,
+  makeTaxonomyReactor,
+  taxonomyJobPayload,
+  type SchemeFn,
+  type AssignFn,
+  type SavedItem,
+  type SchemeCategory,
+} from "./taxonomy.js";

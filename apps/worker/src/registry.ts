@@ -6,6 +6,7 @@ import {
   libraryFold,
   marksFold,
   papersFold,
+  taxonomyFold,
 } from "@nc/folds";
 import {
   affiliationsReactor,
@@ -14,6 +15,7 @@ import {
   libraryArxivBackfillReactor,
   paperFilterReactor,
   paperpileImportReactor,
+  taxonomyReactor,
 } from "@nc/reactors";
 
 // Explicit wiring of every fold and reactor — greppable, no magic discovery.
@@ -24,6 +26,7 @@ export const folds: readonly Fold[] = [
   graphFold,
   libraryFold,
   marksFold,
+  taxonomyFold,
 ];
 export const reactors: readonly Reactor[] = [
   arxivReactor,
@@ -32,4 +35,5 @@ export const reactors: readonly Reactor[] = [
   labPublicationsReactor,
   paperpileImportReactor,
   libraryArxivBackfillReactor,
+  taxonomyReactor,
 ];

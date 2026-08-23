@@ -17,6 +17,8 @@ export {
   paperpileItemImportedV1,
   userPaperMarkedV1,
   userPaperMarkedV2,
+  agentTaxonomyProposedV1,
+  type AgentTaxonomyProposed,
   type UserPaperMarked,
   type ArxivPaperIngested,
   type UserFilterDefined,

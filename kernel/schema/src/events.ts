@@ -112,6 +112,19 @@ function upcastMarkedV1(previous: unknown): unknown {
   };
 }
 
+export const agentTaxonomyProposedV1 = z.object({
+  /** Identifies this scheme version (hash of its categories). */
+  schemeId: z.string().min(1),
+  categories: z.array(
+    z.object({
+      slug: z.string().min(1), // kebab-case, stable within a scheme
+      name: z.string().min(1),
+      description: z.string(),
+    }),
+  ),
+});
+export type AgentTaxonomyProposed = z.infer<typeof agentTaxonomyProposedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -129,4 +142,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
       { schema: userPaperMarkedV2, upcast: upcastMarkedV1 },
     ],
   },
+  { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
 ]);
