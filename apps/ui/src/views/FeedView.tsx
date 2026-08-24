@@ -138,6 +138,33 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
   );
 }
 
+const revealStep = 5;
+
+/** A day's resurfacing block, revealed a few rows at a time. */
+function ResurfacedBlock({
+  items,
+  onMarked,
+}: {
+  items: ResurfacedItem[];
+  onMarked: () => void;
+}) {
+  const [shown, setShown] = useState(revealStep);
+  const visible = items.slice(0, shown);
+  return (
+    <>
+      <div className="timeline-kind">resurfaced</div>
+      {visible.map((item) => (
+        <ResurfacedRow key={item.entityId} item={item} onMarked={onMarked} />
+      ))}
+      {visible.length < items.length && (
+        <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + revealStep)}>
+          show {Math.min(revealStep, items.length - visible.length)} more
+        </button>
+      )}
+    </>
+  );
+}
+
 export function FeedView({ filters }: { filters: FilterSummary[] }) {
   const [days, setDays] = useState(3);
   const { data: feed, refresh } = useCached(`feed:${days}`, () => api.feed(days));
@@ -197,12 +224,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
         <div key={day} className="timeline-day">
           <div className="feed-date timeline-date">{formatDay(day)}</div>
           {resurfaced.length > 0 && (
-            <>
-              <div className="timeline-kind">resurfaced</div>
-              {resurfaced.map((item) => (
-                <ResurfacedRow key={`r-${day}-${item.entityId}`} item={item} onMarked={refresh} />
-              ))}
-            </>
+            <ResurfacedBlock key={`r-${day}`} items={resurfaced} onMarked={refresh} />
           )}
           {fresh.length > 0 && (
             <>
