@@ -94,10 +94,14 @@ class SpriteSandbox implements Sandbox {
         try {
           this.sprite = await spritesClient().getSprite(this.name);
         } catch {
+          // Claude Code's stated minimum is 4GB RAM; on 2GB/2cpu sprites it
+          // took 1-2 minutes just to boot and pnpm install ran 2-4 minutes.
+          // Idle sprites hibernate at no compute cost, so the bigger size
+          // only bills while a turn is actually running.
           this.sprite = await spritesClient().createSprite(this.name, {
             config: {
-              ramMB: 2048,
-              cpus: 2,
+              ramMB: Number(process.env["SPRITES_RAM_MB"] ?? 4096),
+              cpus: Number(process.env["SPRITES_CPUS"] ?? 4),
               region: process.env["SPRITES_REGION"] ?? "sjc",
             },
           });
