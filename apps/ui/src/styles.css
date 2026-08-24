@@ -983,6 +983,12 @@ button.mark.on {
   margin: 0;
 }
 
+/* Save / want-to-read sit against the right rule, clear of the title. */
+.entity-head .mark-buttons {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .entity-kind {
   font-size: 11px;
   font-weight: 600;
@@ -1013,9 +1019,12 @@ button.mark.on {
 }
 
 /* The separator rides on the end of each name, so a row that wraps never
-   starts a line with an orphan dot. */
+   starts a line with an orphan dot. It is inline-block so the link's hover
+   underline stops at the name and leaves the dot alone. */
 .affiliation-link:not(:last-child)::after {
-  content: " \00b7";
+  content: "\00b7";
+  display: inline-block;
+  margin-left: 8px;
   color: var(--muted);
 }
 
