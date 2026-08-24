@@ -212,16 +212,30 @@ git checkout -q "$DEV_TRUNK" && git pull -q origin "$DEV_TRUNK"
 curl -fsSL https://fly.io/install.sh 2>/dev/null | sh > /dev/null 2>&1
 export FLYCTL_INSTALL="$HOME/.fly"
 export PATH="$FLYCTL_INSTALL/bin:$PATH"
+# The two deploys are independent — run them concurrently (each is a remote
+# Docker build; the layer-cached Dockerfiles make unchanged-deps builds fast).
 DEPLOYED=""
+WORKER_PID=""
+UI_PID=""
 if [ -n "\${FLY_DEPLOY_TOKEN_WORKER:-}" ]; then
   echo "[nc] deploying personalbase-worker"
   FLY_API_TOKEN="$FLY_DEPLOY_TOKEN_WORKER" flyctl deploy -c fly.toml --remote-only \
-    && DEPLOYED="$DEPLOYED personalbase-worker" || echo "[nc] worker deploy FAILED"
+    > "$NC_RUN_DIR/deploy-worker.log" 2>&1 &
+  WORKER_PID=$!
 fi
 if [ -n "\${FLY_DEPLOY_TOKEN_UI:-}" ]; then
   echo "[nc] deploying personalbase-ui"
   FLY_API_TOKEN="$FLY_DEPLOY_TOKEN_UI" flyctl deploy -c fly.ui.toml --remote-only \
-    && DEPLOYED="$DEPLOYED personalbase-ui" || echo "[nc] ui deploy FAILED"
+    > "$NC_RUN_DIR/deploy-ui.log" 2>&1 &
+  UI_PID=$!
+fi
+if [ -n "$WORKER_PID" ]; then
+  if wait "$WORKER_PID"; then DEPLOYED="$DEPLOYED personalbase-worker"; \
+  else echo "[nc] worker deploy FAILED"; tail -5 "$NC_RUN_DIR/deploy-worker.log"; fi
+fi
+if [ -n "$UI_PID" ]; then
+  if wait "$UI_PID"; then DEPLOYED="$DEPLOYED personalbase-ui"; \
+  else echo "[nc] ui deploy FAILED"; tail -5 "$NC_RUN_DIR/deploy-ui.log"; fi
 fi
 NC_DEPLOYED="$DEPLOYED" node -e "
 const { readFileSync, writeFileSync } = require('node:fs');
