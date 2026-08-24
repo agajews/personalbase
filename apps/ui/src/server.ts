@@ -64,6 +64,10 @@ const sql: Sql = connect(databaseUrl);
 // migrations can't (and shouldn't) run; transport auth is the sandbox's
 // SSO-gated URL rather than UI_PASSWORD.
 const previewMode = process.env["NC_PREVIEW"] === "1";
+// NC_TRUSTED_TRANSPORT=1: transport auth happens upstream (a sprite's
+// SSO-gated URL — the main-ui reactor sets this), so the password gate
+// stands down. Never set it on a directly-reachable host.
+const trustedTransport = previewMode || process.env["NC_TRUSTED_TRANSPORT"] === "1";
 if (!previewMode) {
   await migrate(sql, kernelMigrationsDir);
 }
@@ -78,7 +82,7 @@ const app = new Hono();
 const uiPassword = process.env["UI_PASSWORD"] ?? "";
 const host = process.env["HOST"] ?? "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 4680);
-if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost" && !previewMode) {
+if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost" && !trustedTransport) {
   console.error(`refusing to bind ${host} without UI_PASSWORD set`);
   process.exit(1);
 }

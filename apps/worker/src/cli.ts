@@ -14,6 +14,7 @@ import {
   catchUpEventReactors,
   catchUpFolds,
   enqueueDueCronJobs,
+  enqueueJob,
   processPendingJobs,
   runReactor,
 } from "@nc/process";
@@ -37,6 +38,8 @@ const usage = `usage: pnpm nc <command>
   run-filter [name] [--days N | --from <iso> --to <iso>]
                                               judge ingested papers against filters
   results <name> [--rejects]                  show verdicts for the current prompt
+  enqueue <process> [<payload-json>]          enqueue a job for any reactor
+                                              (e.g. enqueue reactor:main-ui)
   tail [--limit N]                            inspect the tail of the event log
   daemon                                      run folds + reactors continuously
 `;
@@ -423,6 +426,17 @@ switch (command) {
   case "results":
     await cmdResults(rest);
     break;
+  case "enqueue": {
+    const [proc, payloadJson] = rest;
+    if (proc === undefined || !reactors.some((r) => `reactor:${r.name}` === proc)) {
+      fail(`enqueue: unknown process ${proc ?? "(none)"}; known: ${reactors.map((r) => `reactor:${r.name}`).join(", ")}`);
+    }
+    await withDb(async (sql) => {
+      const jobId = await enqueueJob(sql, proc, JSON.parse(payloadJson ?? "{}"));
+      console.log(`enqueued ${jobId} (${proc}) — the daemon picks it up within seconds`);
+    });
+    break;
+  }
   case "tail":
     await cmdTail(rest);
     break;

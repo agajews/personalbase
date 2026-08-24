@@ -14,6 +14,7 @@ import {
 } from "@nc/folds";
 import {
   affiliationsReactor,
+  mainUiReactor,
   questionWriterReactor,
   resurfacerReactor,
   arxivReactor,
@@ -52,4 +53,5 @@ export const reactors: readonly Reactor[] = [
   taxonomyReactor,
   resurfacerReactor,
   questionWriterReactor,
+  mainUiReactor,
 ];
