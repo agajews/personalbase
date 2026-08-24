@@ -186,8 +186,30 @@ function ResurfacedBlock({
         <ResurfacedRow key={item.entityId} item={item} onMarked={onMarked} />
       ))}
       {visible.length < items.length && (
-        <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + revealStep)}>
+        <button className="ghost reveal-more" onClick={() => setShown((n) => n + revealStep)}>
           show {Math.min(revealStep, items.length - visible.length)} more
+        </button>
+      )}
+    </>
+  );
+}
+
+const freshStep = 10;
+
+/** A day's new papers: the ones already in the library lead, and the long tail
+ * of unsaved arrivals stays folded until asked for. */
+function FreshBlock({ items, onMarked }: { items: FeedItem[]; onMarked: () => void }) {
+  const [shown, setShown] = useState(freshStep);
+  const ordered = [...items.filter((i) => i.mark !== null), ...items.filter((i) => i.mark === null)];
+  const visible = ordered.slice(0, shown);
+  return (
+    <>
+      {visible.map((item) => (
+        <FeedRow key={item.arxivId} item={item} onMarked={onMarked} />
+      ))}
+      {visible.length < ordered.length && (
+        <button className="ghost reveal-more" onClick={() => setShown((n) => n + freshStep)}>
+          show {Math.min(freshStep, ordered.length - visible.length)} more
         </button>
       )}
     </>
@@ -269,9 +291,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
           {fresh.length > 0 && (
             <>
               {resurfaced.length > 0 && <div className="timeline-kind">new papers</div>}
-              {fresh.map((item) => (
-                <FeedRow key={item.arxivId} item={item} onMarked={refresh} />
-              ))}
+              <FreshBlock items={fresh} onMarked={refresh} />
             </>
           )}
         </div>
