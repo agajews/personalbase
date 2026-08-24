@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type PaperListItem, type PapersQuery } from "../api.js";
 import { useCached } from "../cache.js";
-import { AuthorsLine, CategoryChips, EntityChip, formatDay, MarkButtons } from "../ui.js";
+import { Abstract, AuthorsLine, CategoryChips, EntityChip, formatDay, MarkButtons } from "../ui.js";
 
 function PaperRow({ item, onMarked }: { item: PaperListItem; onMarked: () => void }) {
   return (
@@ -46,7 +46,7 @@ function PaperRow({ item, onMarked }: { item: PaperListItem; onMarked: () => voi
         </a>
       </summary>
       <AuthorsLine authors={item.authors} />
-      <p className="verdict-abstract">{item.abstract}</p>
+      <Abstract text={item.abstract} />
       <p className="verdict-actions">
         <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={onMarked} />
         <CategoryChips categories={item.categories} />

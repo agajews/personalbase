@@ -8,6 +8,7 @@ import {
 } from "../api.js";
 import { useCached } from "../cache.js";
 import {
+  Abstract,
   ago,
   AuthorsLine,
   CategoryChips,
@@ -84,7 +85,7 @@ function FeedRow({ item, onMarked }: { item: FeedItem; onMarked: () => void }) {
       </summary>
       <AuthorsLine authors={item.authors} />
       {top !== undefined && <p className="verdict-reason">{top.reason}</p>}
-      <p className="verdict-abstract">{item.abstract}</p>
+      <Abstract text={item.abstract} />
       <p className="verdict-actions">
         <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={onMarked} />
         <CategoryChips categories={item.categories} />
@@ -132,7 +133,7 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
         )}
       </summary>
       <AuthorsLine authors={item.authors} />
-      {item.abstract !== null && <p className="verdict-abstract">{item.abstract}</p>}
+      {item.abstract !== null && <Abstract text={item.abstract} />}
       <p className="verdict-actions">
         <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={onMarked} />
         <CategoryChips categories={item.categories} />

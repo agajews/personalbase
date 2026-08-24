@@ -8,6 +8,7 @@ import {
 } from "../api.js";
 import { useCached } from "../cache.js";
 import {
+  Abstract,
   ago,
   AuthorsLine,
   BusyButton,
@@ -71,7 +72,7 @@ function VerdictRow({
       </summary>
       <AuthorsLine authors={verdict.authors} />
       <p className="verdict-reason">{verdict.reason}</p>
-      <p className="verdict-abstract">{verdict.abstract}</p>
+      <Abstract text={verdict.abstract} />
       <p className="verdict-actions">
         <MarkButtons entityId={verdict.entityId} mark={verdict.mark} onChanged={onMarked} />
         <CategoryChips categories={verdict.categories} />
