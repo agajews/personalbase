@@ -62,7 +62,6 @@ export function makeDevMergeReactor(
             DEV_PR_NUMBER: String(request.prNumber),
             GITHUB_TOKEN: cfg.githubToken,
             FLY_DEPLOY_TOKEN_WORKER: cfg.flyDeployTokenWorker,
-            FLY_DEPLOY_TOKEN_UI: cfg.flyDeployTokenUi,
           },
         });
       }

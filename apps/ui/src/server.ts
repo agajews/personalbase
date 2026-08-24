@@ -1,9 +1,7 @@
 import { existsSync } from "node:fs";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { getSignedCookie, setSignedCookie } from "hono/cookie";
 import { z } from "zod";
 import {
   appendEvents,
@@ -62,11 +60,11 @@ if (databaseUrl === undefined || databaseUrl === "") {
 const sql: Sql = connect(databaseUrl);
 // Preview mode (dev agents' sandboxes): read-only database credentials, so
 // migrations can't (and shouldn't) run; transport auth is the sandbox's
-// SSO-gated URL rather than UI_PASSWORD.
+// SSO-gated URL.
 const previewMode = process.env["NC_PREVIEW"] === "1";
 // NC_TRUSTED_TRANSPORT=1: transport auth happens upstream (a sprite's
-// SSO-gated URL — the main-ui reactor sets this), so the password gate
-// stands down. Never set it on a directly-reachable host.
+// SSO-gated URL — the main-ui reactor sets this). Never set it on a
+// directly-reachable host; see CLAUDE.md.
 const trustedTransport = previewMode || process.env["NC_TRUSTED_TRANSPORT"] === "1";
 if (!previewMode) {
   await migrate(sql, kernelMigrationsDir);
@@ -74,103 +72,19 @@ if (!previewMode) {
 
 const app = new Hono();
 
-// ---- auth ----
-// Enabled whenever UI_PASSWORD is set (always in deployment; local dev binds
-// to 127.0.0.1 and runs open). Sessions are cookies signed with a key derived
-// from the password, so rotating the password invalidates every session. The
-// guard must be registered before the routes it protects.
-const uiPassword = process.env["UI_PASSWORD"] ?? "";
+// ---- binding (CLAUDE.md: never open any port publicly) ----
+// The server itself carries no auth. It binds loopback for local dev, or
+// non-loopback ONLY behind the Fly-sprite SSO proxy (NC_TRUSTED_TRANSPORT /
+// NC_PREVIEW), where the sprites.app URL enforces org sign-in before any
+// request reaches this process. There is deliberately no password/cookie
+// scheme to justify a public bind.
 const host = process.env["HOST"] ?? "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 4680);
-if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost" && !trustedTransport) {
-  console.error(`refusing to bind ${host} without UI_PASSWORD set`);
+if (host !== "127.0.0.1" && host !== "localhost" && !trustedTransport) {
+  console.error(
+    `refusing to bind ${host}: non-loopback binds are only allowed behind the sprite SSO proxy`,
+  );
   process.exit(1);
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
-
-// ---- GitHub push webhook ----
-// GitHub POSTs here on every push; a push to trunk enqueues the sha-gated
-// main-ui resync, so the sprite deployment updates within seconds of a land
-// (the reactor's 15-min cron remains the backstop for missed deliveries).
-// HMAC over the raw body authenticates GitHub — webhooks can't send auth
-// headers, so this route is registered before the password gate. 404 when
-// GITHUB_WEBHOOK_SECRET is unset (previews, the sprite itself, local dev).
-const webhookSecret = process.env["GITHUB_WEBHOOK_SECRET"] ?? "";
-const devTrunk = process.env["DEV_TRUNK"] ?? "main";
-app.post("/webhooks/github", async (c) => {
-  if (webhookSecret === "") {
-    return c.json({ error: "webhook not configured" }, 404);
-  }
-  const body = await c.req.text();
-  const expected =
-    "sha256=" + createHmac("sha256", webhookSecret).update(body).digest("hex");
-  if (!safeEqual(c.req.header("x-hub-signature-256") ?? "", expected)) {
-    return c.json({ error: "bad signature" }, 401);
-  }
-  if (c.req.header("x-github-event") !== "push") {
-    return c.json({ ok: true, ignored: "not a push" });
-  }
-  const push = JSON.parse(body) as { ref?: string };
-  if (push.ref !== `refs/heads/${devTrunk}`) {
-    return c.json({ ok: true, ignored: `not ${devTrunk}` });
-  }
-  const jobId = await enqueueJob(sql, "reactor:main-ui", {});
-  return c.json({ ok: true, jobId });
-});
-
-const loginPage = (message: string) => `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>personalbase</title>
-<style>
-  body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #ddd;
-         display: grid; place-items: center; min-height: 100dvh; margin: 0; }
-  form { display: flex; gap: 8px; flex-direction: column; width: min(320px, 80vw); }
-  input { font-size: 16px; padding: 10px 12px; border-radius: 8px; border: 1px solid #444;
-          background: #1c1c1c; color: #eee; }
-  button { font-size: 15px; padding: 10px; border-radius: 8px; border: none;
-           background: #3a6ea5; color: white; cursor: pointer; }
-  .msg { color: #d08080; font-size: 13px; min-height: 1em; }
-</style></head>
-<body><form method="post" action="/login">
-  <input type="password" name="password" placeholder="password" autofocus autocomplete="current-password">
-  <button type="submit">enter</button>
-  <div class="msg">${message}</div>
-</form></body></html>`;
-
-if (uiPassword !== "") {
-  const cookieSecret = createHmac("sha256", uiPassword).update("nc-ui-session").digest("hex");
-  const session = { path: "/", httpOnly: true, secure: true, sameSite: "Lax" as const,
-                    maxAge: 90 * 86_400 };
-  app.get("/healthz", (c) => c.text("ok"));
-  app.get("/login", (c) => c.html(loginPage("")));
-  app.post("/login", async (c) => {
-    const form = await c.req.parseBody();
-    const password = typeof form["password"] === "string" ? form["password"] : "";
-    if (!safeEqual(password, uiPassword)) {
-      return c.html(loginPage("wrong password"), 401);
-    }
-    await setSignedCookie(c, "nc_session", "ok", cookieSecret, session);
-    return c.redirect("/");
-  });
-  app.use("*", async (c, next) => {
-    if ((await getSignedCookie(c, cookieSecret, "nc_session")) === "ok") {
-      return next();
-    }
-    // Bearer <password> lets curl and future agents skip the cookie dance.
-    const bearer = c.req.header("authorization") ?? "";
-    if (safeEqual(bearer, `Bearer ${uiPassword}`)) {
-      return next();
-    }
-    if (c.req.path.startsWith("/api/")) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-    return c.redirect("/login");
-  });
 }
 
 function dateRange(days: number): { from: string; to: string } {
