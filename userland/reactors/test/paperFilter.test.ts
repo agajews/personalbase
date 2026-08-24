@@ -147,6 +147,27 @@ describe("paper-filter reactor", () => {
     ]);
   });
 
+  test("a default sweep judges by arrival, not submission date", async () => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.filter.defined",
+        schemaVersion: 1,
+        source: "test",
+        occurredAt: new Date().toISOString(),
+        payload: { name: "arrivals", prompt: "State space", model: "test-model" },
+      },
+    ]);
+    await catchUpFolds(sql, coreRegistry, folds);
+
+    // No from/to: the sweep covers recent ingested_at. Every test paper was
+    // ingested just now, including the one submitted back in July.
+    const result = await runReactor(sql, coreRegistry, reactor, {
+      kind: "job",
+      payload: { filter: "arrivals" },
+    });
+    expect(result.emitted).toBe(3);
+  });
+
   test("naming a missing filter is an error", async () => {
     await expect(
       runReactor(sql, coreRegistry, reactor, {

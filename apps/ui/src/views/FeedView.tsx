@@ -19,15 +19,9 @@ import {
   navTo,
 } from "../ui.js";
 
-function FeedRow({
-  item,
-  hueFor,
-  onMarked,
-}: {
-  item: FeedItem;
-  hueFor: (filter: string) => number;
-  onMarked: () => void;
-}) {
+function FeedRow({ item, onMarked }: { item: FeedItem; onMarked: () => void }) {
+  // Hues come from each verdict's own prompt hash, so a paper judged under an
+  // earlier prompt version wears that version's color, not the current one.
   const top = item.matches[0];
   return (
     <details className="verdict">
@@ -44,7 +38,7 @@ function FeedRow({
           {top !== undefined && (
             <span
               className="confidence-fill"
-              style={{ width: `${top.confidence * 100}%`, background: `hsl(${hueFor(top.filter)} 45% 42%)` }}
+              style={{ width: `${top.confidence * 100}%`, background: `hsl(${hashHue(top.promptHash)} 45% 42%)` }}
             />
           )}
         </span>
@@ -68,10 +62,11 @@ function FeedRow({
           <span
             key={m.filter}
             className="hash-chip"
+            title={`judged under prompt ${m.promptHash}`}
             style={{
-              color: `hsl(${hueFor(m.filter)} 45% 30%)`,
-              background: `hsl(${hueFor(m.filter)} 50% 93%)`,
-              borderColor: `hsl(${hueFor(m.filter)} 35% 78%)`,
+              color: `hsl(${hashHue(m.promptHash)} 45% 30%)`,
+              background: `hsl(${hashHue(m.promptHash)} 50% 93%)`,
+              borderColor: `hsl(${hashHue(m.promptHash)} 35% 78%)`,
             }}
           >
             {m.filter}
@@ -207,9 +202,6 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
     return () => clearInterval(timer);
   }, [refresh]);
 
-  const hueFor = (name: string) =>
-    hashHue(filters.find((f) => f.name === name)?.promptHash ?? "000000");
-
   // One timeline: fresh papers (by publication day) and each day's recorded
   // resurfacing merge into day sections, newest first. Future surfaced kinds
   // (repetition cards, memos, reading blocks) join the same merge.
@@ -237,7 +229,9 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
       section(group.day).resurfaced.push(...group.items);
     }
     for (const item of feed.items) {
-      section(new Date(item.publishedAt).toISOString().slice(0, 10)).fresh.push(item);
+      // Group by arrival day — arXiv lists papers under their announcement
+      // day, and arrival tracks announcement.
+      section(new Date(item.ingestedAt).toISOString().slice(0, 10)).fresh.push(item);
     }
   }
   const ordered = [...sections.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
@@ -276,7 +270,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
             <>
               {resurfaced.length > 0 && <div className="timeline-kind">new papers</div>}
               {fresh.map((item) => (
-                <FeedRow key={item.arxivId} item={item} hueFor={hueFor} onMarked={refresh} />
+                <FeedRow key={item.arxivId} item={item} onMarked={refresh} />
               ))}
             </>
           )}
