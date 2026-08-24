@@ -219,7 +219,11 @@ export function TaskView({ uid }: { uid: string }) {
       })),
   ].sort((a, b) => a.at - b.at);
   const featurePr = [...page.runs].reverse().find((r) => r.prNumber !== null);
-  const mergeable = page.task.status === "pr_open" && featurePr?.prNumber != null;
+  // With live sessions a task sits at 'running' even while its PR is open,
+  // so mergeability follows the PR, not the status.
+  const mergeable =
+    featurePr?.prNumber != null &&
+    !["merged", "merging", "archived"].includes(page.task.status);
 
   const approve = async () => {
     if (featurePr?.prNumber == null) return;
