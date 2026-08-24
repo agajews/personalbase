@@ -21,15 +21,17 @@ import {
 
 function VerdictRow({
   verdict,
-  hue,
+  currentHash,
   open,
   onMarked,
 }: {
   verdict: Verdict;
-  hue: number;
+  /** The filter's current prompt hash; older verdicts get their hash chip. */
+  currentHash: string;
   open: boolean;
   onMarked: () => void;
 }) {
+  const hue = hashHue(verdict.promptHash);
   return (
     <details className="verdict" open={open}>
       <summary>
@@ -44,6 +46,9 @@ function VerdictRow({
             style={{ width: `${verdict.confidence * 100}%`, background: `hsl(${hue} 45% 42%)` }}
           />
         </span>
+        {verdict.promptHash !== currentHash && (
+          <HashChip hash={verdict.promptHash} label="earlier prompt" />
+        )}
         <a
           className="verdict-title"
           href={`#/entity/${verdict.entityId}`}
@@ -156,7 +161,6 @@ export function FilterView({
   const judging = state.jobs.some(
     (j) => j.process === "reactor:paper-filter" && (creating ? false : j.payload["filter"] === name),
   );
-  const hue = filter.promptHash !== "" ? hashHue(filter.promptHash) : 160;
   const lastFilterRun = state.runs.find((r) => r.process === "reactor:paper-filter");
 
   return (
@@ -258,7 +262,8 @@ export function FilterView({
           </div>
           {results.matches.length === 0 && results.rejects.length === 0 ? (
             <div className="empty">
-              No verdicts under this prompt yet — judge a date range to populate.
+              No verdicts yet — new papers are judged as they arrive, or judge a
+              date range to backfill.
             </div>
           ) : (
             <>
@@ -266,7 +271,7 @@ export function FilterView({
                 <VerdictRow
                   key={v.arxivId}
                   verdict={v}
-                  hue={hue}
+                  currentHash={filter.promptHash}
                   open={true}
                   onMarked={refreshResults}
                 />
@@ -278,7 +283,7 @@ export function FilterView({
                     <VerdictRow
                       key={v.arxivId}
                       verdict={v}
-                      hue={hue}
+                      currentHash={filter.promptHash}
                       open={false}
                       onMarked={refreshResults}
                     />

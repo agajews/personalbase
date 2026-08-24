@@ -91,6 +91,27 @@ describe("paper-filter reactor", () => {
     ]);
   });
 
+  test("an ingested paper schedules one shared sweep job per burst", async () => {
+    const event = {
+      seq: 1n,
+      eventUid: crypto.randomUUID(),
+      type: "arxiv.paper.ingested",
+      schemaVersion: 1,
+      source: "test",
+      occurredAt: new Date(),
+      recordedAt: new Date(),
+      payload: {},
+      causedByUid: null,
+      correctsUid: null,
+    };
+    await runReactor(sql, coreRegistry, reactor, { kind: "event", event });
+    await runReactor(sql, coreRegistry, reactor, { kind: "event", event });
+    const jobs = await sql`
+      select job_id from jobs where process = 'reactor:paper-filter' and status = 'pending'`;
+    expect(jobs).toHaveLength(1); // the second event deduped into the same sweep
+    await sql`delete from jobs where process = 'reactor:paper-filter'`;
+  });
+
   test("rerunning with an unchanged prompt judges nothing (no LLM spend)", async () => {
     const batchesBefore = judgedBatches.length;
     const result = await runReactor(sql, coreRegistry, reactor, {
@@ -124,6 +145,27 @@ describe("paper-filter reactor", () => {
       ["2508.00001", "reject"],
       ["2508.00002", "match"],
     ]);
+  });
+
+  test("a default sweep judges by arrival, not submission date", async () => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.filter.defined",
+        schemaVersion: 1,
+        source: "test",
+        occurredAt: new Date().toISOString(),
+        payload: { name: "arrivals", prompt: "State space", model: "test-model" },
+      },
+    ]);
+    await catchUpFolds(sql, coreRegistry, folds);
+
+    // No from/to: the sweep covers recent ingested_at. Every test paper was
+    // ingested just now, including the one submitted back in July.
+    const result = await runReactor(sql, coreRegistry, reactor, {
+      kind: "job",
+      payload: { filter: "arrivals" },
+    });
+    expect(result.emitted).toBe(3);
   });
 
   test("naming a missing filter is an error", async () => {

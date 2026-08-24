@@ -72,6 +72,8 @@ export interface Verdict {
   orgs: EntityRef[];
   confidence: number;
   reason: string;
+  /** Hash of the prompt version that produced this verdict. */
+  promptHash: string;
   updatedAt: string;
 }
 
@@ -91,8 +93,10 @@ export interface FeedItem {
   categories: string[];
   publishedAt: string;
   updatedAt: string;
+  /** Arrival in our log — tracks arXiv's announcement day; feed groups by this. */
+  ingestedAt: string;
   labs: EntityRef[];
-  matches: { filter: string; confidence: number; reason: string }[];
+  matches: { filter: string; promptHash: string; confidence: number; reason: string }[];
 }
 
 export interface Feed {

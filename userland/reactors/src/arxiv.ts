@@ -16,7 +16,12 @@ export type ArxivJobPayload = z.infer<typeof arxivJobPayload>;
 
 /** What the daily cron sweep covers. */
 export const dailyCategories = ["cs.LG", "cs.CL", "cs.AI"];
-const defaultWindowDays = 3;
+// The API indexes a paper at announcement, not submission: Friday's papers
+// appear Sunday evening (later still around holidays), so the sweep window
+// must reach back well past the longest announcement lag or papers submitted
+// before a weekend are never seen. Overlap is free — ingestion dedupes by
+// arxivId+version.
+const defaultWindowDays = 6;
 
 const pageSize = 200;
 const pageDelayMs = 3000; // arXiv API etiquette
@@ -119,7 +124,13 @@ export const arxivReactor: Reactor = {
   kind: "reactor",
   name: "arxiv",
   // Daily sweep with a trailing window; idempotency makes the overlap free.
-  trigger: { kind: "cron", intervalHours: 24, payload: { categories: dailyCategories } },
+  // 6am Pacific: comfortably after arXiv's ~5:30pm PT announcement the
+  // evening before, so each morning picks up the fresh batch.
+  trigger: {
+    kind: "cron",
+    schedule: { dailyAtHour: 6, timeZone: "America/Los_Angeles" },
+    payload: { categories: dailyCategories },
+  },
   async run(_ctx, input: ReactorInput): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
       throw new Error("arxiv reactor only supports job triggers");

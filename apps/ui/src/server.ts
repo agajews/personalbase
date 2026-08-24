@@ -154,9 +154,14 @@ function dateRange(days: number): { from: string; to: string } {
 app.get("/api/state", async (c) => {
   const filters = await sql`
     select name, model, prompt, prompt_hash from filters order by name`;
+  // A paper's standing verdict is the latest one, whatever prompt version
+  // produced it — editing a prompt never un-surfaces previous matches.
   const counts = await sql`
-    select filter_name, prompt_hash, verdict, count(*)::int as n
-    from filter_results group by filter_name, prompt_hash, verdict`;
+    select filter_name, verdict, count(*)::int as n from (
+      select distinct on (filter_name, arxiv_id) filter_name, verdict
+      from filter_results
+      order by filter_name, arxiv_id, decided_seq desc) latest
+    group by filter_name, verdict`;
   const papers = await sql`
     select count(*)::int as total, max(updated_at) as latest from papers`;
   const jobs = await sql`
@@ -182,10 +187,10 @@ app.get("/api/state", async (c) => {
       prompt: f["prompt"],
       promptHash: f["prompt_hash"],
       matches: counts.find(
-        (x) => x["filter_name"] === f["name"] && x["prompt_hash"] === f["prompt_hash"] && x["verdict"] === "match",
+        (x) => x["filter_name"] === f["name"] && x["verdict"] === "match",
       )?.["n"] ?? 0,
       rejects: counts.find(
-        (x) => x["filter_name"] === f["name"] && x["prompt_hash"] === f["prompt_hash"] && x["verdict"] === "reject",
+        (x) => x["filter_name"] === f["name"] && x["verdict"] === "reject",
       )?.["n"] ?? 0,
     })),
     papers: { total: papers[0]!["total"], latest: papers[0]!["latest"] },
@@ -202,13 +207,18 @@ app.get("/api/results/:name", async (c) => {
   if (filter === undefined) {
     return c.json({ error: `no filter named ${name}` }, 404);
   }
+  // Latest verdict per paper, whichever prompt version produced it; the
+  // prompt_hash rides along so the UI can mark verdicts from earlier prompts.
   const rows = await sql`
-    select r.arxiv_id, r.verdict, r.confidence, r.reason,
-           p.title, p.abstract, p.categories, p.authors, p.updated_at
-    from filter_results r
-    join papers p on p.arxiv_id = r.arxiv_id
-    where r.filter_name = ${name} and r.prompt_hash = ${filter["prompt_hash"]}
-    order by r.confidence desc`;
+    select * from (
+      select distinct on (r.arxiv_id)
+             r.arxiv_id, r.prompt_hash, r.verdict, r.confidence, r.reason,
+             p.title, p.abstract, p.categories, p.authors, p.updated_at
+      from filter_results r
+      join papers p on p.arxiv_id = r.arxiv_id
+      where r.filter_name = ${name}
+      order by r.arxiv_id, r.decided_seq desc) latest
+    order by confidence desc`;
   // Institution links live in the graph: paper entity -> org entities.
   const paperIds = new Map(rows.map((r) => [entityId("paper", paperRef(r["arxiv_id"])), r["arxiv_id"]]));
   const orgLinks =
@@ -250,6 +260,7 @@ app.get("/api/results/:name", async (c) => {
     ),
     confidence: Number(r["confidence"]),
     reason: r["reason"],
+    promptHash: r["prompt_hash"],
     updatedAt: r["updated_at"],
   });
   return c.json({
@@ -269,12 +280,17 @@ app.get("/api/feed", async (c) => {
   const from = new Date(Date.now() - days * 86_400_000).toISOString();
   // Recency = paper is new on arXiv OR new to us (lab backfills ingest older
   // papers; they should still surface the day they arrive).
+  // Latest verdict per (filter, paper): an edited prompt takes effect as new
+  // judgments land, without un-surfacing papers matched by earlier prompts.
   const matches = await sql`
-    select r.arxiv_id, r.filter_name, r.confidence, r.reason
-    from filter_results r
-    join filters f on f.name = r.filter_name and f.prompt_hash = r.prompt_hash
-    join papers p on p.arxiv_id = r.arxiv_id
-    where r.verdict = 'match' and (p.updated_at >= ${from} or p.ingested_at >= ${from})`;
+    select arxiv_id, filter_name, prompt_hash, confidence, reason from (
+      select distinct on (r.filter_name, r.arxiv_id)
+             r.arxiv_id, r.filter_name, r.prompt_hash, r.verdict, r.confidence, r.reason
+      from filter_results r
+      join papers p on p.arxiv_id = r.arxiv_id
+      where p.updated_at >= ${from} or p.ingested_at >= ${from}
+      order by r.filter_name, r.arxiv_id, r.decided_seq desc) latest
+    where verdict = 'match'`;
   const windowPapers = await sql`
     select arxiv_id from papers where updated_at >= ${from} or ingested_at >= ${from}`;
   const idToArxiv = new Map(
@@ -293,7 +309,7 @@ app.get("/api/feed", async (c) => {
   const surfaced = new Map<
     string,
     {
-      matches: { filter: string; confidence: number; reason: string }[];
+      matches: { filter: string; promptHash: string; confidence: number; reason: string }[];
       labs: Map<string, string>;
     }
   >();
@@ -305,6 +321,7 @@ app.get("/api/feed", async (c) => {
   for (const m of matches) {
     entry(m["arxiv_id"]).matches.push({
       filter: m["filter_name"],
+      promptHash: m["prompt_hash"],
       confidence: Number(m["confidence"]),
       reason: m["reason"],
     });
@@ -318,7 +335,8 @@ app.get("/api/feed", async (c) => {
     surfaced.size === 0
       ? []
       : await sql`
-          select arxiv_id, title, abstract, authors, categories, published_at, updated_at
+          select arxiv_id, title, abstract, authors, categories,
+                 published_at, updated_at, ingested_at
           from papers where arxiv_id = any(${[...surfaced.keys()]})`;
   const feedMarkRows =
     papers.length === 0
@@ -343,14 +361,17 @@ app.get("/api/feed", async (c) => {
         categories: p["categories"],
         publishedAt: p["published_at"],
         updatedAt: p["updated_at"],
+        ingestedAt: p["ingested_at"],
         labs: [...why.labs].map(([eid, name]) => ({ entityId: eid, name })),
         matches: why.matches.sort((a, b) => b.confidence - a.confidence),
       };
     })
-    // Newest publication date first; within a day, labs and high-confidence
-    // matches lead. Old lab backfills sink to the bottom naturally.
+    // Newest arrival day first — arrival tracks arXiv's announcement day
+    // (today's batch lists under today, like the arxiv.org listing), and lab
+    // backfills surface the day they arrive. Within a day, labs and
+    // high-confidence matches lead.
     .sort((a, b) => {
-      const day = (i: typeof a) => new Date(i.publishedAt).toISOString().slice(0, 10);
+      const day = (i: typeof a) => new Date(i.ingestedAt).toISOString().slice(0, 10);
       if (day(a) !== day(b)) {
         return day(a) < day(b) ? 1 : -1;
       }
@@ -553,7 +574,7 @@ app.get("/api/entity/:id", async (c) => {
                  (f.prompt_hash = r.prompt_hash) as current
           from filter_results r join filters f on f.name = r.filter_name
           where r.arxiv_id = ${paper["arxiv_id"]}
-          order by r.filter_name, (f.prompt_hash = r.prompt_hash) desc, r.decided_seq desc`;
+          order by r.filter_name, r.decided_seq desc`;
   const shapeLink = (l: (typeof linksOut)[number]) => ({
     linkType: l["link_type"],
     assertedBy: l["asserted_by"],

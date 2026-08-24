@@ -92,11 +92,31 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 mkdir -p /nc/bin
 corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
 export PATH="/nc/bin:$HOME/.local/bin:$PATH"
+# Tool installs need no repo — overlap them with the clone. Claude Code's
+# native installer (a prebuilt binary into ~/.local/bin) is minutes faster
+# than npm install -g on a small sandbox.
+CLAUDE_PID=""
+if ! command -v claude > /dev/null 2>&1; then
+  echo "[nc] installing claude code (in background)"
+  { curl -fsSL https://claude.ai/install.sh | bash; } > "$NC_RUN_DIR/claude-install.log" 2>&1 &
+  CLAUDE_PID=$!
+fi
+PNPM_PID=""
+if ! command -v pnpm > /dev/null 2>&1; then
+  echo "[nc] bootstrapping pnpm (in background)"
+  npm install -g pnpm --force > "$NC_RUN_DIR/pnpm-install.log" 2>&1 &
+  PNPM_PID=$!
+fi
 if [ ! -d /nc/repo ]; then
-  echo "[nc] cloning $DEV_REPO"
-  git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" /nc/repo \
+  # Blobless + sparse: skips all historical blobs and experiments/ (100MB+
+  # of audio). Old blobs are fetched lazily if the agent ever reads them.
+  echo "[nc] cloning $DEV_REPO (blobless, sparse)"
+  git clone --quiet --filter=blob:none --no-checkout \
+    "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" /nc/repo \
     || fail "clone failed"
   cd /nc/repo
+  git sparse-checkout set --no-cone '/*' '!/experiments' \
+    || echo "[nc] sparse-checkout unavailable; falling back to a full checkout"
   git config user.name "nc dev agent"
   git config user.email "dev-agent@personalbase.invalid"
   git checkout -qb "$DEV_BRANCH" "origin/$DEV_TRUNK" || fail "branch checkout failed"
@@ -104,21 +124,18 @@ else
   cd /nc/repo
   git checkout -q "$DEV_BRANCH" || fail "branch checkout failed"
 fi
-if ! command -v pnpm > /dev/null 2>&1; then
-  echo "[nc] bootstrapping pnpm (slow the first time)"
-  npm install -g pnpm --force > /dev/null 2>&1
-fi
+if [ -n "$PNPM_PID" ]; then wait "$PNPM_PID" || true; fi
+command -v pnpm > /dev/null 2>&1 \
+  || { tail -20 "$NC_RUN_DIR/pnpm-install.log" 2> /dev/null; fail "pnpm bootstrap failed"; }
 install -m 0755 "$NC_RUN_DIR/preview.sh" /nc/bin/nc-preview 2> /dev/null || true
 if [ ! -d /nc/repo/node_modules ]; then
   echo "[nc] installing dependencies"
   pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 \
     || { tail -20 "$NC_RUN_DIR/install.log"; fail "pnpm install failed"; }
 fi
-if ! command -v claude > /dev/null 2>&1; then
-  echo "[nc] installing claude code"
-  npm install -g @anthropic-ai/claude-code > "$NC_RUN_DIR/claude-install.log" 2>&1 \
-    || { tail -20 "$NC_RUN_DIR/claude-install.log"; fail "claude code install failed"; }
-fi
+if [ -n "$CLAUDE_PID" ]; then wait "$CLAUDE_PID" || true; fi
+command -v claude > /dev/null 2>&1 \
+  || { tail -20 "$NC_RUN_DIR/claude-install.log" 2> /dev/null; fail "claude code install failed"; }
 # One live Claude session per run: stream-json over a named pipe. The writer
 # subshell delivers the initial prompt, then execs into a sleeper that holds
 # the pipe open — killing it (holder.pid) EOFs stdin and the session ends
@@ -264,10 +281,18 @@ echo "preview requested — a private link appears on the user's task page withi
 export const mergeRunScript = `#!/usr/bin/env bash
 set -uo pipefail
 cd /nc
-echo "[nc] cloning $DEV_REPO"
-git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" repo \
+# flyctl is only needed for the deploy at the end — install it while
+# everything else runs.
+curl -fsSL https://fly.io/install.sh 2>/dev/null | sh > /dev/null 2>&1 &
+FLYCTL_PID=$!
+echo "[nc] cloning $DEV_REPO (blobless, sparse)"
+git clone --quiet --filter=blob:none --no-checkout \
+  "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" repo \
   || { echo '{"error":"clone failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 cd repo
+git sparse-checkout set --no-cone '/*' '!/experiments' \
+  || echo "[nc] sparse-checkout unavailable; falling back to a full checkout"
+git checkout -q "origin/$DEV_TRUNK" --detach
 git config user.name "nc merge agent"
 git config user.email "merge-agent@personalbase.invalid"
 echo "[nc] checking out PR #$DEV_PR_NUMBER"
@@ -294,10 +319,12 @@ pnpm typecheck \
 echo "[nc] merging via GitHub API"
 node "$NC_RUN_DIR/merge.mjs" || { echo '{"error":"merge failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] deploying from merged trunk"
-git checkout -q "$DEV_TRUNK" && git pull -q origin "$DEV_TRUNK"
-curl -fsSL https://fly.io/install.sh 2>/dev/null | sh > /dev/null 2>&1
+git fetch -q origin "$DEV_TRUNK" && git checkout -q "origin/$DEV_TRUNK" --detach
+wait "$FLYCTL_PID" || true
 export FLYCTL_INSTALL="$HOME/.fly"
 export PATH="$FLYCTL_INSTALL/bin:$PATH"
+command -v flyctl > /dev/null 2>&1 \
+  || { echo '{"error":"flyctl install failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 # The two deploys are independent — run them concurrently (each is a remote
 # Docker build; the layer-cached Dockerfiles make unchanged-deps builds fast).
 DEPLOYED=""

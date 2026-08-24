@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Reactor, ReactorEvent } from "@nc/process";
+import type { Reactor, ReactorEvent, ReactorResult } from "@nc/process";
 import { anthropicJudge, type JudgeFn, type PaperForJudging } from "./judge.js";
 
 export const paperFilterJobPayload = z.object({
@@ -12,7 +12,11 @@ export const paperFilterJobPayload = z.object({
 export type PaperFilterJobPayload = z.infer<typeof paperFilterJobPayload>;
 
 const chunkSize = 12;
-const defaultWindowDays = 3;
+// Default sweeps judge by arrival (ingested_at), which tracks arXiv's
+// announcement day — submission dates lag announcements by days around
+// weekends. 48h reaches back across a missed day; the unjudged-only query
+// makes the overlap free.
+const defaultWindowHours = 48;
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -30,31 +34,50 @@ interface FilterRow {
 }
 
 /**
- * Judges papers in the requested date range against defined filters. Papers
- * already judged under the filter's current prompt_hash are skipped, so a
- * prompt edit (new hash) naturally re-judges the range while an unchanged
- * prompt makes reruns free.
+ * Judges papers against defined filters. Papers already judged under the
+ * filter's current prompt_hash are skipped, so reruns with an unchanged
+ * prompt are free. A prompt edit takes effect as new judgments land — the
+ * automatic sweep covers fresh arrivals, and the UI's judge button re-judges
+ * an explicit range — while verdicts from earlier prompts stand until then.
  */
 export function makePaperFilterReactor(judge: JudgeFn): Reactor {
   return {
     kind: "reactor",
     name: "paper-filter",
-    // Daily judging over the same trailing window the ingest sweep covers;
-    // already-judged (filter, prompt_hash, paper) triples are skipped, so the
-    // scheduled run only pays for genuinely new papers or edited prompts.
-    trigger: { kind: "cron", intervalHours: 24, payload: {} },
-    async run(ctx, input): Promise<ReactorEvent[]> {
-      if (input.kind !== "job") {
-        throw new Error("paper-filter reactor only supports job triggers");
+    // Judging reacts to papers arriving rather than running on a clock. Each
+    // ingested-paper event schedules one shared sweep job (hourly dedupe
+    // bucket) instead of judging inline, because judging batches 12 papers
+    // per LLM call; the delay gives the papers fold time to catch up before
+    // the sweep queries it. Already-judged (filter, prompt_hash, paper)
+    // triples are skipped, so sweeps only pay for genuinely new papers or
+    // edited prompts.
+    trigger: { kind: "event", consumes: ["arxiv.paper.ingested"] },
+    async run(ctx, input): Promise<ReactorResult> {
+      if (input.kind === "event") {
+        return {
+          events: [],
+          followUps: [
+            {
+              process: "reactor:paper-filter",
+              payload: {},
+              runAfterSeconds: 60,
+              dedupeKey: `paper-filter:sweep:${new Date().toISOString().slice(0, 13)}`,
+            },
+          ],
+        };
       }
       const parsed = paperFilterJobPayload.parse(input.payload);
+      // No explicit range = a sweep over the day's arrivals; an explicit
+      // range (the UI's judge button, backfills) matches papers whose
+      // submission or arrival falls inside it.
+      const byArrivalOnly = parsed.from === undefined;
       const to = parsed.to ?? new Date().toISOString();
       const payload = {
         ...parsed,
         to,
         from:
           parsed.from ??
-          new Date(new Date(to).getTime() - defaultWindowDays * 86_400_000).toISOString(),
+          new Date(new Date(to).getTime() - defaultWindowHours * 3_600_000).toISOString(),
       };
       const filters: FilterRow[] =
         payload.filter === undefined
@@ -71,7 +94,9 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
           await ctx.sql`
             select p.arxiv_id, p.title, p.abstract, p.categories
             from papers p
-            where p.updated_at >= ${payload.from} and p.updated_at < ${payload.to}
+            where ((p.ingested_at >= ${payload.from} and p.ingested_at < ${payload.to})
+                or (${!byArrivalOnly}
+                    and p.updated_at >= ${payload.from} and p.updated_at < ${payload.to}))
               and not exists (
                 select 1 from filter_results r
                 where r.filter_name = ${filter.name}
