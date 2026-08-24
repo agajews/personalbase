@@ -24,7 +24,7 @@ type Route =
   | { kind: "agents" }
   | { kind: "task"; uid: string }
   | { kind: "topics"; slug: string | null }
-  | { kind: "chat" }
+  | { kind: "chat"; uid: string | null }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -55,7 +55,10 @@ function parseRoute(hash: string): Route {
         ? { kind: "task", uid: parts[1] }
         : { kind: "agents" };
     case "chat":
-      return { kind: "chat" };
+      return {
+        kind: "chat",
+        uid: parts[1] !== undefined && parts[1] !== "" ? parts[1] : null,
+      };
     case "topics":
       return {
         kind: "topics",
@@ -249,7 +252,7 @@ export function App() {
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
-          {route.kind === "chat" && <ChatView />}
+          {route.kind === "chat" && <ChatView key="chat" uid={route.uid} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

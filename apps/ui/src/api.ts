@@ -208,11 +208,56 @@ export interface ChatTraceItem {
   isError: boolean;
 }
 
-export interface ChatResult {
-  /** Opaque API-fidelity transcript; store and send back verbatim. */
-  transcript: unknown[];
-  reply: string;
+export interface ChatSummary {
+  chatUid: string;
+  title: string;
+  lastAt: string;
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  text: string;
   trace: ChatTraceItem[];
+}
+
+export type ChatStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "tool"; item: ChatTraceItem }
+  | { type: "done"; reply: string }
+  | { type: "error"; message: string };
+
+/** POSTs a chat turn and yields SSE events as they arrive. */
+export async function* streamChatTurn(
+  chatUid: string,
+  message: string,
+): AsyncGenerator<ChatStreamEvent> {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chatUid, message }),
+  });
+  if (!response.ok || response.body === null) {
+    throw new Error(`chat request failed: ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      return;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("data: ")) {
+          yield JSON.parse(line.slice(6)) as ChatStreamEvent;
+        }
+      }
+    }
+  }
 }
 
 export interface TableList {
@@ -273,8 +318,9 @@ export const api = {
     request(`/api/topics/${encodeURIComponent(slug)}`),
   classify: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
-  chat: (transcript: unknown[], message: string): Promise<ChatResult> =>
-    post("/api/chat", { transcript, message }) as Promise<ChatResult>,
+  chats: (): Promise<{ chats: ChatSummary[] }> => request("/api/chats"),
+  chatTurns: (chatUid: string): Promise<{ turns: ChatTurn[] }> =>
+    request(`/api/chats/${encodeURIComponent(chatUid)}`),
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (
     name: string,
@@ -318,6 +364,8 @@ export interface DevRunSummary {
   prUrl: string | null;
   summary: string | null;
   error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 export interface DevTaskListItem {

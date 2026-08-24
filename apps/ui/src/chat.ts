@@ -2,7 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { coreRegistry } from "@nc/schema";
 import { appendEvents, type Sql } from "@nc/log";
-import { enqueueJob } from "@nc/process";
+import { catchUpFolds, enqueueJob } from "@nc/process";
+import { chatsFold } from "@nc/folds";
 
 // The chat surface: Opus with the database as its hands. Reads are arbitrary
 // read-only SQL; actions are appended events (validated against the schema
@@ -258,44 +259,91 @@ async function execTool(
 let client: Anthropic | undefined;
 const cachedSystem = systemPrompt();
 
-export interface ChatResult {
-  /** Full API-fidelity transcript for the client to store and send back. */
-  transcript: Anthropic.MessageParam[];
-  reply: string;
-  trace: ChatTraceItem[];
+export type ChatStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "tool"; item: ChatTraceItem }
+  | { type: "done"; reply: string }
+  | { type: "error"; message: string };
+
+/** Rebuilds the API transcript for a conversation from the chats fold. */
+async function loadTranscript(sql: Sql, chatUid: string): Promise<Anthropic.MessageParam[]> {
+  const turns = await sql`
+    select role, text, api_messages from chat_turns
+    where chat_uid = ${chatUid} order by event_seq`;
+  const messages: Anthropic.MessageParam[] = [];
+  for (const turn of turns) {
+    if (turn["role"] === "user") {
+      messages.push({ role: "user", content: turn["text"] });
+    } else {
+      messages.push(...((turn["api_messages"] ?? []) as Anthropic.MessageParam[]));
+    }
+  }
+  return messages;
 }
 
-export async function runChat(
+/**
+ * One chat turn: appends the user message to the log, streams the model's
+ * work (text deltas + tool activity), and appends the reply — the
+ * conversation itself is events, folded like everything else.
+ */
+export async function streamChat(
   sql: Sql,
-  transcript: Anthropic.MessageParam[],
-): Promise<ChatResult> {
+  chatUid: string,
+  userText: string,
+  emit: (event: ChatStreamEvent) => Promise<void>,
+): Promise<void> {
   client ??= new Anthropic();
-  const messages = [...transcript];
+  // Load prior turns BEFORE appending this message, so a fast worker fold
+  // can't make the new message show up twice.
+  const prior = await loadTranscript(sql, chatUid);
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.chat.message_sent",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: { chatUid, text: userText },
+    },
+  ]);
+
+  const messages: Anthropic.MessageParam[] = [...prior, { role: "user", content: userText }];
+  const newMessages: Anthropic.MessageParam[] = [];
   const trace: ChatTraceItem[] = [];
   let reply = "";
   for (let i = 0; i < maxIterations; i++) {
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: "claude-opus-5",
       max_tokens: 16000,
       system: [{ type: "text", text: cachedSystem, cache_control: { type: "ephemeral" } }],
       tools,
       messages,
     });
-    messages.push({ role: "assistant", content: response.content });
-    reply = response.content
+    stream.on("text", (delta) => {
+      void emit({ type: "delta", text: delta });
+    });
+    const response = await stream.finalMessage();
+    const assistantTurn: Anthropic.MessageParam = { role: "assistant", content: response.content };
+    messages.push(assistantTurn);
+    newMessages.push(assistantTurn);
+    const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n");
+    if (text !== "") {
+      reply = reply === "" ? text : `${reply}\n\n${text}`;
+    }
     const toolUses = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
     );
     if (toolUses.length === 0) {
-      return { transcript: messages, reply, trace };
+      break;
     }
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const toolUse of toolUses) {
       const result = await execTool(sql, toolUse.name, toolUse.input);
-      trace.push({ tool: toolUse.name, summary: result.summary, isError: result.isError });
+      const item = { tool: toolUse.name, summary: result.summary, isError: result.isError };
+      trace.push(item);
+      await emit({ type: "tool", item });
       results.push({
         type: "tool_result",
         tool_use_id: toolUse.id,
@@ -303,11 +351,22 @@ export async function runChat(
         ...(result.isError ? { is_error: true } : {}),
       });
     }
-    messages.push({ role: "user", content: results });
+    const resultTurn: Anthropic.MessageParam = { role: "user", content: results };
+    messages.push(resultTurn);
+    newMessages.push(resultTurn);
+    if (i === maxIterations - 1) {
+      reply += "\n\n(stopped after too many tool iterations)";
+    }
   }
-  return {
-    transcript: messages,
-    reply: reply === "" ? "(stopped after too many tool iterations)" : reply,
-    trace,
-  };
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "agent.chat.replied",
+      schemaVersion: 1,
+      source: "agent:chat",
+      occurredAt: new Date().toISOString(),
+      payload: { chatUid, reply, trace, apiMessages: newMessages },
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, [chatsFold]);
+  await emit({ type: "done", reply });
 }

@@ -201,6 +201,30 @@ export const agentTaxonomyProposedV1 = z.object({
 });
 export type AgentTaxonomyProposed = z.infer<typeof agentTaxonomyProposedV1>;
 
+// ---- operator chat: conversations are events like everything else ----
+
+export const userChatMessageSentV1 = z.object({
+  chatUid: z.uuid(), // client-minted conversation id
+  text: z.string().min(1),
+});
+export type UserChatMessageSent = z.infer<typeof userChatMessageSentV1>;
+
+export const agentChatRepliedV1 = z.object({
+  chatUid: z.uuid(),
+  /** The assistant's visible reply (markdown). */
+  reply: z.string(),
+  trace: z.array(
+    z.object({ tool: z.string(), summary: z.string(), isError: z.boolean() }),
+  ),
+  /**
+   * The raw API messages this turn appended after the user message
+   * (assistant content blocks and tool-result messages), so the
+   * conversation can be resumed with full tool-context fidelity.
+   */
+  apiMessages: z.array(z.unknown()),
+});
+export type AgentChatReplied = z.infer<typeof agentChatRepliedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -228,4 +252,6 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "dev.pr.merged", versions: [{ schema: devPrMergedV1 }] },
   { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
   { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
+  { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
+  { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
 ]);

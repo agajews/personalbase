@@ -641,6 +641,170 @@ button.mark.on {
   margin-top: 10px;
 }
 
+/* ---- chat layout: thread + history rail pinned to the window's right ---- */
+
+.chat-main {
+  min-width: 0;
+}
+
+.chat-history {
+  position: fixed;
+  top: 64px;
+  right: 18px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+}
+
+/* Narrow windows: fall back to an in-flow rail so it can't overlap the thread. */
+@media (max-width: 1199px) {
+  .chat-layout {
+    display: flex;
+    gap: 22px;
+  }
+
+  .chat-main {
+    flex: 1;
+  }
+
+  .chat-history {
+    position: static;
+    flex-shrink: 0;
+    max-height: calc(100vh - 200px);
+  }
+}
+
+.chat-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.chat-history-item:hover {
+  background: var(--card);
+}
+
+.chat-history-item.active {
+  background: var(--card);
+  border-color: var(--line);
+}
+
+.chat-history-title {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chat-history-when {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* ---- chat home (Claude-style centered composer) ---- */
+
+.chat-home {
+  max-width: 640px;
+  margin: 0 auto;
+  padding-top: 14vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chat-home-title {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 600;
+  margin: 0;
+  text-align: center;
+}
+
+.chat-home-sub {
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+  margin: 0 0 8px;
+}
+
+.chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-composer textarea {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 15px;
+  resize: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.chat-composer.large textarea {
+  box-shadow: 0 2px 14px rgba(27, 36, 32, 0.07);
+}
+
+/* markdown inside assistant bubbles */
+.chat-bubble > :first-child {
+  margin-top: 0;
+}
+
+.chat-bubble > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-bubble pre {
+  background: var(--bench);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.chat-bubble code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.chat-bubble table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.chat-bubble th,
+.chat-bubble td {
+  border: 1px solid var(--line);
+  padding: 4px 9px;
+}
+
+.chat-title {
+  font-weight: 400;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+
 /* ---- chat ---- */
 
 .chat-view {
@@ -674,6 +838,7 @@ button.mark.on {
   color: #eef4ee;
   border-radius: 12px 12px 3px 12px;
   padding: 9px 13px;
+  white-space: pre-wrap;
 }
 
 .chat-turn.assistant .chat-bubble {
@@ -681,7 +846,6 @@ button.mark.on {
   border: 1px solid var(--line);
   border-radius: 12px 12px 12px 3px;
   padding: 10px 14px;
-  white-space: pre-wrap;
 }
 
 .chat-trace {
