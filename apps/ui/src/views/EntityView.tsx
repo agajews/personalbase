@@ -103,7 +103,7 @@ export function EntityView({ id }: { id: string }) {
               key={l.other.entityId}
               entityId={l.other.entityId}
               name={l.other.displayName ?? l.other.entityId}
-              className="org-chip"
+              className="affiliation-link"
             />
           ))}
         </p>

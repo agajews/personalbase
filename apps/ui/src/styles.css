@@ -991,12 +991,32 @@ button.mark.on {
   color: var(--muted);
 }
 
-/* Affiliations lead the page: one horizontal row of chips under the title. */
+/* Affiliations lead the page: one horizontal Newsreader row under the title,
+   the same serif the link groups set entity names in. */
 .entity-affiliations {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0 0;
+  align-items: baseline;
+  gap: 0 8px;
+  margin: 6px 0 0;
+  font-family: var(--serif);
+  font-size: 15px;
+}
+
+.affiliation-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.affiliation-link:hover {
+  text-decoration: underline;
+}
+
+/* The separator rides on the end of each name, so a row that wraps never
+   starts a line with an orphan dot. */
+.affiliation-link:not(:last-child)::after {
+  content: " \00b7";
+  color: var(--muted);
 }
 
 .entity-idents {
