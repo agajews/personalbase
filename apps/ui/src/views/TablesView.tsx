@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type TableList, type TablePage } from "../api.js";
+import { api } from "../api.js";
+import { useCached } from "../cache.js";
 
 // Raw view of everything the database holds — the whole system is legible
 // from here: the fact plane (events), derived fold tables, and the
@@ -10,10 +11,7 @@ export function TablesView({ table }: { table: string | null }) {
 }
 
 function TableIndex() {
-  const [list, setList] = useState<TableList | null>(null);
-  useEffect(() => {
-    void api.tables().then(setList);
-  }, []);
+  const { data: list } = useCached("tables", () => api.tables());
   if (list === null) {
     return <div className="empty">loading…</div>;
   }
@@ -45,23 +43,17 @@ function cell(value: unknown): string {
 }
 
 function TableDetail({ name }: { name: string }) {
-  const [page, setPage] = useState<TablePage | null>(null);
   const [sort, setSort] = useState<{ column?: string; dir: "asc" | "desc" }>({ dir: "desc" });
   const [offset, setOffset] = useState(0);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setError(null);
-    api
-      .table(name, { sort: sort.column, dir: sort.dir, offset })
-      .then(setPage)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [name, sort, offset]);
+  const { data: page, error } = useCached(
+    `table:${name}:${sort.column ?? ""}:${sort.dir}:${offset}`,
+    () => api.table(name, { sort: sort.column, dir: sort.dir, offset }),
+  );
 
   useEffect(() => {
     setSort({ dir: "desc" });
     setOffset(0);
-    setPage(null);
   }, [name]);
 
   if (error !== null) {

@@ -4,9 +4,9 @@ import {
   previewHash,
   type AppState,
   type FilterSummary,
-  type Results,
   type Verdict,
 } from "../api.js";
+import { useCached } from "../cache.js";
 import {
   ago,
   AuthorsLine,
@@ -102,11 +102,16 @@ export function FilterView({
     () => (creating ? newFilter : (state.filters.find((f) => f.name === name) ?? null)),
     [state, name, creating],
   );
-  const [results, setResults] = useState<Results | null>(null);
   const [draft, setDraft] = useState({ name: "", model: "", prompt: "" });
   const [nextHash, setNextHash] = useState("");
   const [days, setDays] = useState(3);
-  const [tick, setTick] = useState(0);
+
+  // Existing filters show their verdicts; the results poll while the view
+  // is open so a running judge job streams in.
+  const { data: results, refresh: refreshResults } = useCached(
+    `results:${name ?? ""}`,
+    () => (creating || name === null ? Promise.resolve(null) : api.results(name)),
+  );
 
   useEffect(() => {
     if (filter !== null) {
@@ -126,30 +131,11 @@ export function FilterView({
 
   useEffect(() => {
     if (creating || name === null) {
-      setResults(null);
       return;
     }
-    let cancelled = false;
-    let inFlight = false;
-    const load = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const r = await api.results(name);
-        if (!cancelled) setResults(r);
-      } catch {
-        if (!cancelled) setResults(null);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [name, creating, tick]);
+    const timer = setInterval(refreshResults, 3000);
+    return () => clearInterval(timer);
+  }, [name, creating, refreshResults]);
 
   const act = async (f: () => Promise<unknown>) => {
     try {
@@ -274,7 +260,7 @@ export function FilterView({
                   verdict={v}
                   hue={hue}
                   open={true}
-                  onMarked={() => setTick((t) => t + 1)}
+                  onMarked={refreshResults}
                 />
               ))}
               {results.rejects.length > 0 && (
@@ -286,7 +272,7 @@ export function FilterView({
                       verdict={v}
                       hue={hue}
                       open={false}
-                      onMarked={() => setTick((t) => t + 1)}
+                      onMarked={refreshResults}
                     />
                   ))}
                 </details>

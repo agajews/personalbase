@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { api, type EntityLink, type EntityPage } from "../api.js";
+import { useState } from "react";
+import { api, type EntityLink } from "../api.js";
+import { useCached } from "../cache.js";
 import { ago, MarkButtons } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
@@ -61,19 +62,7 @@ function groupLinks(links: EntityLink[], direction: "out" | "in"): [string, Enti
 }
 
 export function EntityView({ id }: { id: string }) {
-  const [page, setPage] = useState<EntityPage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    setError(null);
-    api
-      .entity(id)
-      .then(setPage)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [id, tick]);
-
-  useEffect(() => setPage(null), [id]);
+  const { data: page, error, refresh } = useCached(`entity:${id}`, () => api.entity(id));
 
   if (error !== null) {
     return <div className="error">{error}</div>;
@@ -99,11 +88,7 @@ export function EntityView({ id }: { id: string }) {
         <span className="entity-kind">{entity.kind}</span>
         <h1>{entity.displayName ?? entity.entityId}</h1>
         {(entity.kind === "paper" || entity.kind === "resource") && (
-          <MarkButtons
-            entityId={entity.entityId}
-            mark={page.mark}
-            onChanged={() => setTick((t) => t + 1)}
-          />
+          <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
         )}
       </div>
       {page.identifiers.length > 0 && (

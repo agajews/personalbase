@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import {
   api,
-  type Feed,
   type FeedItem,
   type FilterSummary,
   type Resurfaced,
   type ResurfacedItem,
 } from "../api.js";
+import { useCached } from "../cache.js";
 import {
   ago,
   AuthorsLine,
@@ -208,30 +208,11 @@ function ResurfacedSection() {
 }
 
 export function FeedView({ filters }: { filters: FilterSummary[] }) {
-  const [feed, setFeed] = useState<Feed | null>(null);
-  const [tick, setTick] = useState(0);
+  const { data: feed, refresh } = useCached("feed", () => api.feed(3));
   useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    const load = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const f = await api.feed(3);
-        if (!cancelled) setFeed(f);
-      } catch {
-        if (!cancelled) setFeed(null);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 10_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [tick]);
+    const timer = setInterval(refresh, 10_000);
+    return () => clearInterval(timer);
+  }, [refresh]);
 
   const hueFor = (name: string) =>
     hashHue(filters.find((f) => f.name === name)?.promptHash ?? "000000");
@@ -256,12 +237,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
           <div key={day}>
             <div className="feed-date">{formatDay(day)}</div>
             {items.map((item) => (
-              <FeedRow
-                key={item.arxivId}
-                item={item}
-                hueFor={hueFor}
-                onMarked={() => setTick((t) => t + 1)}
-              />
+              <FeedRow key={item.arxivId} item={item} hueFor={hueFor} onMarked={refresh} />
             ))}
           </div>
         ))}

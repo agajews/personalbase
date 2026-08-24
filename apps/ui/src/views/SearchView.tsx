@@ -1,18 +1,8 @@
-import { useEffect, useState } from "react";
-import { api, type SearchResults } from "../api.js";
+import { api } from "../api.js";
+import { useCached } from "../cache.js";
 
 export function SearchView({ q }: { q: string }) {
-  const [results, setResults] = useState<SearchResults | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setResults(null);
-    setError(null);
-    api
-      .search(q)
-      .then(setResults)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [q]);
+  const { data: results, error } = useCached(`search:${q}`, () => api.search(q));
 
   if (error !== null) {
     return <div className="error">{error}</div>;

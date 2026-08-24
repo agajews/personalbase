@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type PaperListItem, type PapersQuery } from "../api.js";
+import { useCached } from "../cache.js";
 import { AuthorsLine, CategoryChips, EntityChip, formatDay, MarkButtons } from "../ui.js";
 
 function PaperRow({ item, onMarked }: { item: PaperListItem; onMarked: () => void }) {
@@ -62,40 +63,46 @@ export function PapersView({ category }: { category: string | null }) {
     dir: "desc",
     category: category ?? undefined,
   });
-  const [items, setItems] = useState<PaperListItem[]>([]);
-  const [total, setTotal] = useState<number | null>(null);
-  const [categories, setCategories] = useState<{ name: string; papers: number }[]>([]);
   const [qDraft, setQDraft] = useState("");
-  const [tick, setTick] = useState(0);
   const loading = useRef(false);
 
-  useEffect(() => {
-    void api.categories().then((r) => setCategories(r.categories));
-  }, []);
+  const categories =
+    useCached("categories", () => api.categories()).data?.categories ?? [];
 
   // Route changes (clicking a category chip) update the active filter.
   useEffect(() => {
     setQuery((prev) => ({ ...prev, category: category ?? undefined }));
   }, [category]);
 
-  // Query changes reset the list; load-more appends.
-  const load = async (offset: number, append: boolean) => {
+  // The first page is cached per query so revisits render instantly;
+  // load-more appends further pages, keyed by query so a query change
+  // never mixes pages from different queries.
+  const queryKey = JSON.stringify(query);
+  const { data: firstPage, refresh } = useCached(`papers:${queryKey}`, () =>
+    api.papers({ ...query, offset: 0 }),
+  );
+  const [extra, setExtra] = useState<{ key: string; items: PaperListItem[] }>({
+    key: queryKey,
+    items: [],
+  });
+  const extraItems = extra.key === queryKey ? extra.items : [];
+
+  const items = firstPage === null ? [] : [...firstPage.items, ...extraItems];
+  const total = firstPage?.total ?? null;
+
+  const loadMore = async () => {
     if (loading.current) return;
     loading.current = true;
     try {
-      const page = await api.papers({ ...query, offset });
-      setTotal(page.total);
-      setItems((prev) => (append ? [...prev, ...page.items] : page.items));
+      const page = await api.papers({ ...query, offset: items.length });
+      setExtra((prev) => ({
+        key: queryKey,
+        items: prev.key === queryKey ? [...prev.items, ...page.items] : page.items,
+      }));
     } finally {
       loading.current = false;
     }
   };
-
-  useEffect(() => {
-    setItems([]);
-    setTotal(null);
-    void load(0, false);
-  }, [query, tick]);
 
   // Debounce the text filter into the query.
   useEffect(() => {
@@ -159,10 +166,10 @@ export function PapersView({ category }: { category: string | null }) {
         <span className="run-fact">{total === null ? "loading…" : `${total} papers`}</span>
       </div>
       {items.map((item) => (
-        <PaperRow key={item.arxivId} item={item} onMarked={() => setTick((t) => t + 1)} />
+        <PaperRow key={item.arxivId} item={item} onMarked={refresh} />
       ))}
       {total !== null && items.length < total && (
-        <button className="ghost load-more" onClick={() => void load(items.length, true)}>
+        <button className="ghost load-more" onClick={() => void loadMore()}>
           show more ({items.length} of {total})
         </button>
       )}

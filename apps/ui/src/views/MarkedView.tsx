@@ -1,17 +1,10 @@
-import { useEffect, useState } from "react";
-import { api, type Mark, type MarkedItem } from "../api.js";
+import { api, type Mark } from "../api.js";
+import { useCached } from "../cache.js";
 import { ago, MarkButtons } from "../ui.js";
 
 export function MarkedView({ mark }: { mark: Mark }) {
-  const [items, setItems] = useState<MarkedItem[] | null>(null);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    api
-      .marked(mark)
-      .then((r) => setItems(r.items))
-      .catch(() => setItems(null));
-  }, [mark, tick]);
+  const { data, error, refresh } = useCached(`marked:${mark}`, () => api.marked(mark));
+  const items = data?.items ?? null;
 
   const title = mark === "want_to_read" ? "want to read" : "saved";
   return (
@@ -20,7 +13,8 @@ export function MarkedView({ mark }: { mark: Mark }) {
         <span className="entity-kind">{mark === "want_to_read" ? "shortlist" : "library"}</span>
         <h1>{title}</h1>
       </div>
-      {items === null && <div className="empty">loading…</div>}
+      {error !== null && <div className="error">{error}</div>}
+      {items === null && error === null && <div className="empty">loading…</div>}
       {items !== null && items.length === 0 && (
         <div className="empty">
           {mark === "want_to_read"
@@ -39,11 +33,7 @@ export function MarkedView({ mark }: { mark: Mark }) {
                 {item.title ?? item.entityId}
               </a>
               <span className="link-provenance">{ago(item.markedAt)}</span>
-              <MarkButtons
-                entityId={item.entityId}
-                mark={item.mark}
-                onChanged={() => setTick((t) => t + 1)}
-              />
+              <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={refresh} />
             </div>
           ))}
         </section>

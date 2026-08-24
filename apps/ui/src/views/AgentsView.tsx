@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type DevTaskListItem } from "../api.js";
+import { api } from "../api.js";
+import { useCached } from "../cache.js";
 import { ago, navTo, runDuration } from "../ui.js";
 
 const statusLabel: Record<string, string> = {
@@ -16,45 +17,29 @@ export function DevStatusChip({ status }: { status: string }) {
 }
 
 export function AgentsView() {
-  const [tasks, setTasks] = useState<DevTaskListItem[] | null>(null);
+  const { data, error: loadError, refresh } = useCached("dev-tasks", () => api.devTasks());
+  const tasks = data?.tasks ?? null;
   const [spec, setSpec] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    const load = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const d = await api.devTasks();
-        if (!cancelled) setTasks(d.tasks);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        inFlight = false;
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [tick]);
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
+  }, [refresh]);
 
   const submit = async () => {
     if (spec.trim() === "") return;
     try {
       await api.createDevTask(spec.trim());
       setSpec("");
-      setError(null);
-      setTick((t) => t + 1);
+      setSubmitError(null);
+      refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setSubmitError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  const error = submitError ?? loadError;
 
   return (
     <section className="results agents">

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { api, type AppState, type TopicGroup, type TopicItems } from "../api.js";
-import { BusyButton, MarkButtons, navTo } from "../ui.js";
+import { useEffect } from "react";
+import { api, type AppState } from "../api.js";
+import { useCached } from "../cache.js";
+import { BusyButton, MarkButtons } from "../ui.js";
 
 // LLM-derived topic groups over the saved library. The scheme is proposed by
 // the taxonomy reactor; regenerating re-derives it from scratch, while
@@ -11,23 +12,19 @@ export function TopicsView({ slug, state }: { slug: string | null; state: AppSta
 }
 
 function TopicIndex({ state }: { state: AppState | null }) {
-  const [groups, setGroups] = useState<TopicGroup[] | null>(null);
-  const [tick, setTick] = useState(0);
+  const { data, refresh } = useCached("topics", () => api.topics());
+  const groups = data?.groups ?? null;
 
   const classifying = state?.jobs.some((j) => j.process === "reactor:taxonomy") ?? false;
-
-  useEffect(() => {
-    void api.topics().then((r) => setGroups(r.groups));
-  }, [tick]);
 
   // While a classification job runs, poll for its results landing.
   useEffect(() => {
     if (!classifying) {
       return;
     }
-    const timer = setInterval(() => setTick((t) => t + 1), 5000);
+    const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
-  }, [classifying]);
+  }, [classifying, refresh]);
 
   return (
     <div className="entity-page">
@@ -36,7 +33,7 @@ function TopicIndex({ state }: { state: AppState | null }) {
         <h1>topics</h1>
       </div>
       <div className="run-row">
-        <BusyButton className="primary" onClick={() => api.classify(false).then(() => setTick((t) => t + 1))}>
+        <BusyButton className="primary" onClick={() => api.classify(false).then(refresh)}>
           Classify new items
         </BusyButton>
         {classifying && <span className="working">classifying…</span>}
@@ -64,12 +61,7 @@ function TopicIndex({ state }: { state: AppState | null }) {
 }
 
 function TopicDetail({ slug }: { slug: string }) {
-  const [topic, setTopic] = useState<TopicItems | null>(null);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    void api.topicItems(slug).then(setTopic);
-  }, [slug, tick]);
+  const { data: topic, refresh } = useCached(`topic:${slug}`, () => api.topicItems(slug));
 
   if (topic === null) {
     return <div className="empty">loading…</div>;
@@ -91,11 +83,7 @@ function TopicDetail({ slug }: { slug: string }) {
               {item.title ?? item.entityId}
             </a>
             <span className="link-provenance">{item.confidence.toFixed(2)}</span>
-            <MarkButtons
-              entityId={item.entityId}
-              mark={item.mark}
-              onChanged={() => setTick((t) => t + 1)}
-            />
+            <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={refresh} />
           </div>
         ))}
       </section>
