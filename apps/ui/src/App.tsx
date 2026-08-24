@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type AppState } from "./api.js";
+import { api, graphModeLabels, type AppState, type GraphMode } from "./api.js";
 import { ago, HashChip, navTo } from "./ui.js";
 import { FeedView } from "./views/FeedView.js";
 import { FilterView } from "./views/FilterView.js";
@@ -12,6 +12,7 @@ import { AgentsView } from "./views/AgentsView.js";
 import { TaskView } from "./views/TaskView.js";
 import { TopicsView } from "./views/TopicsView.js";
 import { GraphView } from "./views/GraphView.js";
+import { TagView } from "./views/TagView.js";
 import { ChatView } from "./views/ChatView.js";
 
 type Route =
@@ -25,7 +26,8 @@ type Route =
   | { kind: "agents" }
   | { kind: "task"; uid: string }
   | { kind: "topics"; slug: string | null }
-  | { kind: "graph"; slug: string | null }
+  | { kind: "graph"; mode: GraphMode; selected: string | null; paper: string | null }
+  | { kind: "tag"; slug: string }
   | { kind: "chat"; uid: string | null }
   | { kind: "tables"; table: string | null };
 
@@ -61,11 +63,24 @@ function parseRoute(hash: string): Route {
         kind: "chat",
         uid: parts[1] !== undefined && parts[1] !== "" ? parts[1] : null,
       };
-    case "graph":
+    case "tag":
+      return parts[1] !== undefined && parts[1] !== ""
+        ? { kind: "tag", slug: decodeURIComponent(parts[1]) }
+        : { kind: "graph", mode: "tags", selected: null, paper: null };
+    case "graph": {
+      // #/graph/<mode>[/<key> | /paper/<id>] — the mode picks what the nodes are.
+      const mode: GraphMode =
+        parts[1] !== undefined && parts[1] in graphModeLabels ? (parts[1] as GraphMode) : "tags";
+      if (parts[2] === "paper" && parts[3] !== undefined && parts[3] !== "") {
+        return { kind: "graph", mode, selected: null, paper: parts[3] };
+      }
       return {
         kind: "graph",
-        slug: parts[1] !== undefined && parts[1] !== "" ? decodeURIComponent(parts[1]) : null,
+        mode,
+        selected: parts[2] !== undefined && parts[2] !== "" ? decodeURIComponent(parts[2]) : null,
+        paper: null,
       };
+    }
     case "topics":
       return {
         kind: "topics",
@@ -205,10 +220,10 @@ export function App() {
             <span className="filter-name">Topics</span>
           </button>
           <button
-            className={`filter-item ${route.kind === "graph" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "graph" || route.kind === "tag" ? "active" : ""}`}
             onClick={() => navTo("/graph")}
           >
-            <span className="filter-name">Tag graph</span>
+            <span className="filter-name">Graph</span>
           </button>
           <button
             className={`filter-item today ${route.kind === "agents" || route.kind === "task" ? "active" : ""}`}
@@ -265,7 +280,15 @@ export function App() {
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
-          {route.kind === "graph" && <GraphView slug={route.slug} state={state} />}
+          {route.kind === "tag" && <TagView slug={route.slug} />}
+          {route.kind === "graph" && (
+            <GraphView
+              mode={route.mode}
+              selected={route.selected}
+              paper={route.paper}
+              state={state}
+            />
+          )}
           {route.kind === "chat" && <ChatView key="chat" uid={route.uid} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}

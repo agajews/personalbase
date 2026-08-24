@@ -185,13 +185,15 @@ export function facetHue(facet: string): number {
 /**
  * Tag chips on an entity page. Membership is a matter of degree, so the chip's
  * colour saturates with strength: what the paper is squarely about reads
- * strongest, what it merely touches fades toward the page. Each links into the
- * graph focused on that tag.
+ * strongest, what it merely touches fades toward the page.
  */
 export function TagChips({
   tags,
+  hrefFor = (slug) => `#/tag/${encodeURIComponent(slug)}`,
 }: {
   tags: { slug: string; name: string; facet: string; strength: number }[];
+  /** Where a chip leads; the graph's rail keeps you in the map instead. */
+  hrefFor?: (slug: string) => string;
 }) {
   if (tags.length === 0) {
     return null;
@@ -205,7 +207,7 @@ export function TagChips({
           <a
             key={t.slug}
             className="tag-chip"
-            href={`#/graph/${encodeURIComponent(t.slug)}`}
+            href={hrefFor(t.slug)}
             title={`${t.facet} · strength ${t.strength.toFixed(2)}`}
             style={{
               color: `hsl(${h} ${18 + 26 * s}% ${44 - 14 * s}%)`,

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { api, type EntityLink } from "../api.js";
+import { api, type EntityLink, type EntityTagGroup } from "../api.js";
 import { useCached } from "../cache.js";
-import { Abstract, ago, EntityChip, MarkButtons, TagChips } from "../ui.js";
+import { Abstract, ago, EntityChip, facetHue, MarkButtons, TagChips } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -59,6 +59,62 @@ function groupLinks(links: EntityLink[], direction: "out" | "in"): [string, Enti
     groups.set(label, group);
   }
   return [...groups.entries()];
+}
+
+/**
+ * What the papers around an entity are about. On an affiliation this reads as
+ * the lab's subject matter; on a person, theirs — the same papers the link
+ * groups below list flat, organized by the tags they carry instead.
+ */
+function TagGroups({ groups }: { groups: EntityTagGroup[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? groups : groups.slice(0, 8);
+  return (
+    <section className="tag-groups">
+      <div className="feed-date">what these papers are about ({groups.length} tags)</div>
+      {shown.map((g) => (
+        <TagGroup key={g.slug} group={g} />
+      ))}
+      {groups.length > shown.length && (
+        <button className="ghost" onClick={() => setExpanded(true)}>
+          show all {groups.length} tags
+        </button>
+      )}
+    </section>
+  );
+}
+
+function TagGroup({ group }: { group: EntityTagGroup }) {
+  const [expanded, setExpanded] = useState(false);
+  const papers = expanded ? group.papers : group.papers.slice(0, 4);
+  const h = facetHue(group.facet);
+  return (
+    <div className="tag-group">
+      <a
+        className="tag-chip tag-group-name"
+        href={`#/tag/${encodeURIComponent(group.slug)}`}
+        style={{
+          color: `hsl(${h} 40% 32%)`,
+          background: `hsl(${h} 44% 96%)`,
+          borderColor: `hsl(${h} 32% 84%)`,
+        }}
+      >
+        {group.name} <span className="mono">{group.papers.length}</span>
+      </a>
+      <div className="tag-group-papers">
+        {papers.map((p) => (
+          <a key={p.entityId} className="tag-group-paper" href={`#/entity/${p.entityId}`}>
+            {p.title ?? p.entityId}
+          </a>
+        ))}
+        {group.papers.length > papers.length && (
+          <button className="linky" onClick={() => setExpanded(true)}>
+            + {group.papers.length - papers.length} more
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function EntityView({ id }: { id: string }) {
@@ -179,6 +235,8 @@ export function EntityView({ id }: { id: string }) {
           ))}
         </section>
       )}
+
+      {page.tagGroups.length > 0 && <TagGroups groups={page.tagGroups} />}
 
       {groupLinks(otherLinksOut, "out").map(([label, links]) => (
         <LinkGroup key={`out-${label}`} title={label} links={links} />

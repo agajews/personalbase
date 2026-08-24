@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type AppState, type TagGraph, type TagPaper } from "../api.js";
+import {
+  api,
+  graphModeLabels,
+  graphModeNoun,
+  type AppState,
+  type EntityGraph,
+  type GraphMode,
+  type GraphPaper,
+} from "../api.js";
 import { useCached } from "../cache.js";
-import { BusyButton, facetHue, MarkButtons, navTo } from "../ui.js";
+import { ago, BusyButton, facetHue, MarkButtons, navTo, TagChips } from "../ui.js";
+import { NodePanel } from "./TagView.js";
 
-// The tag graph: every granular tag the tagger invented is a node, and two
-// tags are joined by the papers they share. Zoom in far enough and the papers
-// themselves appear, each floating among the tags it belongs to.
+// The entity graph. A node is something saved papers belong to — a tag, an
+// author, an affiliation — and two nodes are joined by the papers they share.
+// Zoom in far enough and the papers themselves appear, each floating among
+// the nodes it belongs to.
 //
 // The layout is a plain Fruchterman-Reingold spring simulation on a canvas —
 // a few hundred nodes is small enough to run without a layout library. It is
@@ -14,6 +24,8 @@ import { BusyButton, facetHue, MarkButtons, navTo } from "../ui.js";
 
 // Only the ratio matters to the layout — it shapes the ellipse the graph
 // relaxes into, so the map fills a wide canvas rather than sitting in a disc.
+/** The canvas's measured size; only its ratio matters, shaping the ellipse
+ *  the graph relaxes into so the map fills whatever space it is given. */
 const canvasSize = { width: 1180, height: 620 };
 /** Ticks run before the first paint, so the map arrives already settled. */
 const prewarmTicks = 320;
@@ -23,7 +35,7 @@ const paperFullZoom = 1.6;
 const paperLabelZoom = 2.4;
 
 interface Node {
-  slug: string;
+  key: string;
   name: string;
   facet: string;
   items: number;
@@ -63,7 +75,7 @@ interface PaperNode {
 interface Layout {
   nodes: Node[];
   edges: Edge[];
-  byslug: Map<string, number>;
+  bykey: Map<string, number>;
   neighbors: Map<string, Set<string>>;
   /** Spring constant: the natural distance between two unrelated nodes. */
   k: number;
@@ -77,15 +89,15 @@ interface Layout {
  * threshold nudges the map the reader is looking at instead of re-forming a
  * different one from scratch.
  */
-function buildLayout(graph: TagGraph, previous: Layout | null): Layout {
+function buildLayout(graph: EntityGraph, previous: Layout | null): Layout {
   const nodes: Node[] = graph.nodes.map((n, i) => {
     // Golden-angle spiral: an even, deterministic starting spread, so the
     // same graph always relaxes into the same map.
     const angle = i * 2.39996;
     const r = 16 * Math.sqrt(i + 1);
-    const seed = previous?.nodes[previous.byslug.get(n.slug) ?? -1];
+    const seed = previous?.nodes[previous.bykey.get(n.key) ?? -1];
     return {
-      slug: n.slug,
+      key: n.key,
       name: n.name,
       facet: n.facet,
       items: n.items,
@@ -100,12 +112,12 @@ function buildLayout(graph: TagGraph, previous: Layout | null): Layout {
       pinned: false,
     };
   });
-  const byslug = new Map(nodes.map((n, i) => [n.slug, i]));
+  const bykey = new Map(nodes.map((n, i) => [n.key, i]));
   const edges: Edge[] = [];
-  const neighbors = new Map<string, Set<string>>(nodes.map((n) => [n.slug, new Set<string>()]));
+  const neighbors = new Map<string, Set<string>>(nodes.map((n) => [n.key, new Set<string>()]));
   for (const e of graph.edges) {
-    const a = byslug.get(e.source);
-    const b = byslug.get(e.target);
+    const a = bykey.get(e.source);
+    const b = bykey.get(e.target);
     if (a === undefined || b === undefined) {
       continue;
     }
@@ -120,7 +132,7 @@ function buildLayout(graph: TagGraph, previous: Layout | null): Layout {
   const layout: Layout = {
     nodes,
     edges,
-    byslug,
+    bykey,
     neighbors,
     k,
     core: (k * Math.sqrt(nodes.length)) / 3,
@@ -129,7 +141,11 @@ function buildLayout(graph: TagGraph, previous: Layout | null): Layout {
   // Relax to completion up front: the reader gets a settled map, and every
   // later interaction starts from rest instead of mid-flight. Re-seeded
   // layouts only need a short settle.
-  const ticks = previous === null ? prewarmTicks : prewarmTicks / 4;
+  // Bound the pre-warm by total work, not tick count: a thousand-author graph
+  // must not freeze the tab while it relaxes.
+  const budget = Math.round(6e6 / Math.max((nodes.length * nodes.length) / 2, 1));
+  const full = Math.min(prewarmTicks, Math.max(60, budget));
+  const ticks = previous === null ? full : Math.round(full / 4);
   const from = previous === null ? 1 : 0.3;
   for (let i = 0; i < ticks; i++) {
     step(layout, Math.max(0.02, from * (1 - i / ticks)));
@@ -326,12 +342,12 @@ function relaxPapers(layout: Layout, ticks: number): void {
   }
 }
 
-function attachPapers(layout: Layout, papers: readonly TagPaper[]): void {
+function attachPapers(layout: Layout, papers: readonly GraphPaper[]): void {
   layout.papers = papers.flatMap((p) => {
     const tags: number[] = [];
     const weights: number[] = [];
-    for (const [slug, strength] of p.tags) {
-      const index = layout.byslug.get(slug);
+    for (const [key, strength] of p.tags) {
+      const index = layout.bykey.get(key);
       if (index !== undefined) {
         tags.push(index);
         weights.push(strength);
@@ -397,12 +413,38 @@ function fit(layout: Layout, view: View, width: number, height: number): void {
   view.offsetY = -((minY + maxY) / 2) * view.scale;
 }
 
-export function GraphView({ slug, state }: { slug: string | null; state: AppState | null }) {
-  const [minShared, setMinShared] = useState(3);
-  const { data: graph, refresh } = useCached(`tag-graph:${minShared}`, () =>
-    api.tagGraph(minShared),
+/** How thin a node's membership can be before it's left out of the map. */
+const defaultMinItems: Record<GraphMode, number> = { tags: 1, authors: 4, orgs: 2 };
+/** Every tag pair shares papers; co-authorship is sparser, so the floor drops. */
+const defaultMinShared: Record<GraphMode, number> = { tags: 3, authors: 2, orgs: 2 };
+
+export function GraphView({
+  mode,
+  selected,
+  paper,
+  state,
+}: {
+  mode: GraphMode;
+  /** The node whose panel is open in the rail. */
+  selected: string | null;
+  /** A paper selected in the map; it opens in the rail, not a new page. */
+  paper: string | null;
+  state: AppState | null;
+}) {
+  const [minShared, setMinShared] = useState(defaultMinShared[mode]);
+  const [minItems, setMinItems] = useState(defaultMinItems[mode]);
+  // Each mode has its own sensible floors: every tag is worth drawing, a
+  // one-paper author is not, and co-authorship is far sparser than co-tagging.
+  useEffect(() => {
+    setMinItems(defaultMinItems[mode]);
+    setMinShared(defaultMinShared[mode]);
+  }, [mode]);
+  const { data: graph, refresh } = useCached(`graph:${mode}:${minShared}:${minItems}`, () =>
+    api.graph(mode, minShared, minItems),
   );
-  const { data: papers } = useCached("tag-papers", () => api.tagPapers());
+  const { data: papers } = useCached(`graph-papers:${mode}:${minItems}`, () =>
+    api.graphPapers(mode, minItems),
+  );
   const { data: tags } = useCached("tags", () => api.tags());
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -445,14 +487,26 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
   }, [tagging, refresh]);
 
   const highlighted = useMemo(() => {
-    const focus = hover?.kind === "tag" ? hover.id : slug;
-    if (focus === null || layout === null) {
+    if (layout === null) {
+      return null;
+    }
+    // A selected paper lights up the tags it belongs to, so the rail and the
+    // map are always describing the same thing.
+    const focusPaper = hover?.kind === "paper" ? hover.id : paper;
+    if (focusPaper !== null) {
+      const p = layout.papers.find((q) => q.entityId === focusPaper);
+      if (p !== undefined) {
+        return new Set(p.tags.map((t) => layout.nodes[t]!.key));
+      }
+    }
+    const focus = hover?.kind === "tag" ? hover.id : selected;
+    if (focus === null) {
       return null;
     }
     const set = new Set(layout.neighbors.get(focus) ?? []);
     set.add(focus);
     return set;
-  }, [hover, slug, layout]);
+  }, [hover, selected, paper, layout]);
 
   const matching = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -461,22 +515,25 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
     }
     return new Set(
       layout.nodes
-        .filter((n) => n.name.toLowerCase().includes(q) || n.slug.includes(q))
-        .map((n) => n.slug),
+        .filter((n) => n.name.toLowerCase().includes(q) || n.key.includes(q))
+        .map((n) => n.key),
     );
   }, [query, layout]);
 
   // Everything the draw loop reads lives in refs, so hovering or selecting a
   // tag repaints without tearing down and restarting the animation frame.
-  const paint = useRef({ highlighted, matching, slug, hover });
-  paint.current = { highlighted, matching, slug, hover };
+  const paint = useRef({ highlighted, matching, selected, paper, hover });
+  paint.current = { highlighted, matching, selected, paper, hover };
   useEffect(() => {
     dirtyRef.current = true;
-  }, [highlighted, matching, slug, hover]);
+  }, [highlighted, matching, selected, paper, hover]);
 
   // Frame the graph on the first layout; after that the view is the reader's
   // and a threshold change only redraws.
   const framedRef = useRef(false);
+  useEffect(() => {
+    framedRef.current = false;
+  }, [mode]);
   useEffect(() => {
     if (layout === null || canvasRef.current === null) {
       return;
@@ -510,6 +567,9 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
       if (resized) {
         canvas.width = Math.round(width * dpr);
         canvas.height = Math.round(height * dpr);
+        // The next relaxation shapes its ellipse to the space it actually has.
+        canvasSize.width = width;
+        canvasSize.height = height;
       }
       if (alphaRef.current > 0.02 && current !== null) {
         step(current, alphaRef.current);
@@ -601,7 +661,7 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
       const { node, paper } = pick(e.clientX, e.clientY);
       const next =
         node !== null
-          ? ({ kind: "tag", id: node.slug } as const)
+          ? ({ kind: "tag", id: node.key } as const)
           : paper !== null
             ? ({ kind: "paper", id: paper.entityId } as const)
             : null;
@@ -645,11 +705,11 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
       return;
     }
     if (d.node !== null) {
-      navTo(`/graph/${encodeURIComponent(d.node.slug)}`);
+      navTo(`/graph/${mode}/${encodeURIComponent(d.node.key)}`);
     } else if (d.paper !== null) {
-      navTo(`/entity/${d.paper.entityId}`);
+      navTo(`/graph/${mode}/paper/${d.paper.entityId}`);
     } else {
-      navTo("/graph");
+      navTo(`/graph/${mode}`);
     }
   };
 
@@ -699,31 +759,50 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
     <div className="graph-view">
       <div className="entity-head">
         <span className="entity-kind">saved library</span>
-        <h1>tag graph</h1>
+        <h1>{graphModeLabels[mode]} graph</h1>
+        <nav className="graph-modes">
+          {(Object.keys(graphModeLabels) as GraphMode[]).map((m) => (
+            <a
+              key={m}
+              className={`graph-mode ${m === mode ? "on" : ""}`}
+              href={`#/graph/${m}`}
+            >
+              {graphModeLabels[m]}
+            </a>
+          ))}
+        </nav>
       </div>
-      <div className="run-row">
-        <BusyButton className="primary" onClick={() => api.runTagger(false).then(refresh)}>
-          Tag new items
-        </BusyButton>
-        <BusyButton
-          title="Re-derive the whole tag vocabulary and re-tag every saved item"
-          onClick={() => api.runTagger(true).then(refresh)}
-        >
-          Regenerate vocabulary
-        </BusyButton>
-        {tagging && <span className="working">tagging…</span>}
-        {tags !== null && tags.vocabId !== null && (
-          <span className="run-fact">
-            {tags.tags.length} tags · {tags.tagged} items tagged
-          </span>
-        )}
-      </div>
+      {mode === "tags" && (
+        <div className="run-row">
+          <BusyButton className="primary" onClick={() => api.runTagger(false).then(refresh)}>
+            Tag new items
+          </BusyButton>
+          <BusyButton
+            title="Re-derive the whole tag vocabulary and re-tag every saved item"
+            onClick={() => api.runTagger(true).then(refresh)}
+          >
+            Regenerate vocabulary
+          </BusyButton>
+          {tagging && <span className="working">tagging…</span>}
+          {tags !== null && tags.vocabId !== null && (
+            <span className="run-fact">
+              {tags.tags.length} tags · {tags.tagged} items tagged
+            </span>
+          )}
+        </div>
+      )}
 
-      {empty && (
+      {empty && mode === "tags" && (
         <div className="empty">
           No tags yet — "Tag new items" has a model read every saved paper, invent a few
           hundred granular tags for this collection, and score how strongly each item
           belongs to each of them.
+        </div>
+      )}
+      {empty && mode !== "tags" && (
+        <div className="empty">
+          Nothing to draw: no saved paper has an {mode === "authors" ? "author" : "affiliation"}{" "}
+          recorded yet.
         </div>
       )}
 
@@ -734,10 +813,21 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Find a tag"
+              placeholder={`Find ${graphModeNoun[mode]}`}
             />
             <label className="graph-slider">
-              min shared papers
+              min papers each
+              <input
+                type="range"
+                min={1}
+                max={12}
+                value={minItems}
+                onChange={(e) => setMinItems(Number(e.target.value))}
+              />
+              <span className="mono">{minItems}</span>
+            </label>
+            <label className="graph-slider">
+              min shared
               <input
                 type="range"
                 min={1}
@@ -749,7 +839,7 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
             </label>
             {graph !== null && (
               <span className="run-fact">
-                {graph.nodes.length} tags · {graph.edges.length} links
+                {graph.nodes.length} {graphModeLabels[mode]} · {graph.edges.length} links
               </span>
             )}
             <button
@@ -790,7 +880,6 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
               <canvas
                 ref={canvasRef}
                 className="tag-canvas"
-                style={{ height: canvasSize.height }}
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
@@ -798,18 +887,42 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
               />
               {hoveredPaper !== null && <div className="graph-tip">{hoveredPaper.title}</div>}
               <p className="graph-hint">
-                drag a tag to pin it · drag the background to pan · scroll to zoom in until
+                drag a node to pin it · drag the background to pan · scroll to zoom in until
                 the papers appear · click for details
               </p>
             </div>
             <aside className="graph-rail">
-              {slug === null ? (
-                <div className="rail-empty">
-                  Click a tag to see the papers that carry it, how strongly, and the tags it
-                  most often travels with.
-                </div>
+              {paper !== null ? (
+                <PaperDetail entityId={paper} backHref={`#/graph/${mode}`} />
+              ) : selected !== null ? (
+                <NodePanel
+                  mode={mode}
+                  nodeKey={selected}
+                  // Chips in the rail keep you in the map; the page link leaves it.
+                  chipHref={(key) => `#/graph/${mode}/${encodeURIComponent(key)}`}
+                  actions={
+                    <span className="rail-actions">
+                      <a
+                        className="crumb"
+                        href={
+                          mode === "tags"
+                            ? `#/tag/${encodeURIComponent(selected)}`
+                            : `#/entity/${selected}`
+                        }
+                      >
+                        open the page →
+                      </a>
+                      <a className="crumb rail-clear" href={`#/graph/${mode}`}>
+                        clear
+                      </a>
+                    </span>
+                  }
+                />
               ) : (
-                <TagDetail slug={slug} />
+                <div className="rail-empty">
+                  Click a node to see the papers that belong to it, how strongly, and what it
+                  most often travels with. Zoom in and click a paper to read it here.
+                </div>
               )}
             </aside>
           </div>
@@ -822,7 +935,8 @@ export function GraphView({ slug, state }: { slug: string | null; state: AppStat
 interface Paint {
   highlighted: Set<string> | null;
   matching: Set<string> | null;
-  slug: string | null;
+  selected: string | null;
+  paper: string | null;
   hover: { kind: "tag" | "paper"; id: string } | null;
 }
 
@@ -834,7 +948,7 @@ function render(
   height: number,
   paint: Paint,
 ): void {
-  const { highlighted, matching, slug } = paint;
+  const { highlighted, matching, selected } = paint;
   const hoverTag = paint.hover?.kind === "tag" ? paint.hover.id : null;
   const sx = (x: number) => x * view.scale + width / 2 + view.offsetX;
   const sy = (y: number) => y * view.scale + height / 2 + view.offsetY;
@@ -842,7 +956,7 @@ function render(
   for (const e of layout.edges) {
     const a = layout.nodes[e.a]!;
     const b = layout.nodes[e.b]!;
-    const lit = highlighted !== null && highlighted.has(a.slug) && highlighted.has(b.slug);
+    const lit = highlighted !== null && highlighted.has(a.key) && highlighted.has(b.key);
     if (highlighted !== null && !lit) {
       ctx.strokeStyle = "rgba(36, 65, 59, 0.05)";
       ctx.lineWidth = 0.6;
@@ -871,8 +985,8 @@ function render(
     const r = 2.4 + 0.5 * Math.min(view.scale / paperFullZoom, 2);
     for (const p of layout.papers) {
       const dim =
-        (highlighted !== null && !p.tags.some((t) => highlighted.has(layout.nodes[t]!.slug))) ||
-        (matching !== null && !p.tags.some((t) => matching.has(layout.nodes[t]!.slug)));
+        (highlighted !== null && !p.tags.some((t) => highlighted.has(layout.nodes[t]!.key))) ||
+        (matching !== null && !p.tags.some((t) => matching.has(layout.nodes[t]!.key)));
       if (dim) {
         dimmedPapers.add(p.entityId);
       }
@@ -883,25 +997,20 @@ function render(
         ? `hsla(${h} 8% 74% / ${0.35 * paperFade})`
         : `hsla(${h} 32% 54% / ${0.75 * paperFade})`;
       ctx.fill();
-      if (paint.hover?.kind === "paper" && paint.hover.id === p.entityId) {
-        ctx.strokeStyle = "#1b2420";
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      }
     }
   }
 
   const labelCandidates: Node[] = [];
   for (const n of layout.nodes) {
     const dim =
-      (highlighted !== null && !highlighted.has(n.slug)) ||
-      (matching !== null && !matching.has(n.slug));
+      (highlighted !== null && !highlighted.has(n.key)) ||
+      (matching !== null && !matching.has(n.key));
     const h = facetHue(n.facet);
     ctx.beginPath();
     ctx.arc(sx(n.x), sy(n.y), screenRadius(n, view), 0, Math.PI * 2);
     ctx.fillStyle = dim ? `hsl(${h} 10% 84%)` : `hsl(${h} 34% 56%)`;
     ctx.fill();
-    if (n.slug === slug || n.slug === hoverTag) {
+    if (n.key === selected || n.key === hoverTag) {
       ctx.strokeStyle = "#24413b";
       ctx.lineWidth = 1.6;
       ctx.stroke();
@@ -916,12 +1025,28 @@ function render(
     }
   }
 
+  // The paper under the cursor or open in the rail is drawn last and larger:
+  // a 3px dot among a few hundred is otherwise impossible to find again.
+  const markedPaper = paint.hover?.kind === "paper" ? paint.hover.id : paint.paper;
+  if (markedPaper !== null && paperFade > 0) {
+    const p = layout.papers.find((q) => q.entityId === markedPaper);
+    if (p !== undefined) {
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 5.5, 0, Math.PI * 2);
+      ctx.fillStyle = `hsl(${facetHue(p.facet)} 38% 50%)`;
+      ctx.fill();
+      ctx.strokeStyle = "#24413b";
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+  }
+
   // Labels are placed biggest-first and skipped when they would collide, so a
   // dense middle reads as a few named landmarks rather than mush.
   ctx.font = "11.5px 'Instrument Sans', system-ui, sans-serif";
   ctx.textBaseline = "middle";
   labelCandidates.sort((a, b) => {
-    const rank = (n: Node) => (n.slug === slug || n.slug === hoverTag ? 1e6 : n.items);
+    const rank = (n: Node) => (n.key === selected || n.key === hoverTag ? 1e6 : n.items);
     return rank(b) - rank(a);
   });
   const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
@@ -939,7 +1064,7 @@ function render(
     if (placed.length >= 70) {
       break;
     }
-    const focused = n.slug === slug || n.slug === hoverTag;
+    const focused = n.key === selected || n.key === hoverTag;
     if (
       !focused &&
       highlighted === null &&
@@ -984,63 +1109,61 @@ function render(
   }
 }
 
-function TagDetail({ slug }: { slug: string }) {
-  const { data: tag, error, refresh } = useCached(`tag:${slug}`, () => api.tag(slug));
+/**
+ * A paper read in the rail rather than on its own page: clicking a dot in the
+ * map shouldn't cost you the view you zoomed in to find it.
+ */
+function PaperDetail({ entityId, backHref }: { entityId: string; backHref: string }) {
+  const { data: page, error, refresh } = useCached(`entity:${entityId}`, () =>
+    api.entity(entityId),
+  );
 
   if (error !== null) {
     return <div className="error">{error}</div>;
   }
-  if (tag === null) {
+  if (page === null) {
     return <div className="empty">loading…</div>;
   }
-  const h = facetHue(tag.facet);
+  const { entity, paper, library } = page;
   return (
     <>
       <div className="rail-head">
-        <span className="entity-kind" style={{ color: `hsl(${h} 34% 36%)` }}>
-          {tag.facet}
-        </span>
-        <a className="crumb rail-clear" href="#/graph">
+        <span className="entity-kind">{entity.kind}</span>
+        <a className="crumb rail-clear" href={backHref}>
           clear
         </a>
       </div>
-      <h2 className="rail-title">{tag.name}</h2>
-      <p className="run-fact">{tag.description}</p>
-      {tag.related.length > 0 && (
+      <h2 className="rail-title">{entity.displayName ?? entity.entityId}</h2>
+      <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
+      <TagChips tags={page.tags} hrefFor={(s) => `#/graph/tags/${encodeURIComponent(s)}`} />
+      {paper !== null && (
         <>
-          <div className="feed-date">travels with</div>
-          <p className="tag-chips">
-            {tag.related.map((r) => (
-              <a key={r.slug} className="tag-chip" href={`#/graph/${encodeURIComponent(r.slug)}`}>
-                {r.name} <span className="mono">{r.shared}</span>
-              </a>
-            ))}
+          <p className="verdict-authors rail-authors">{paper.authors.join(", ")}</p>
+          <p className="rail-abstract">{paper.abstract}</p>
+          <p className="run-fact">
+            <a
+              className="arxiv-id"
+              href={`https://arxiv.org/abs/${paper.arxiv_id}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              arxiv.org/abs/{paper.arxiv_id} ↗
+            </a>
+            {" · ingested "}
+            {ago(paper.ingested_at)}
           </p>
         </>
       )}
-      <div className="feed-date">{tag.items.length} papers</div>
-      <div className="rail-items">
-        {tag.items.map((item) => (
-          <div key={item.entityId} className="rail-item">
-            <a className="rail-item-name" href={`#/entity/${item.entityId}`}>
-              {item.title ?? item.entityId}
-            </a>
-            <div className="rail-item-meta">
-              <span
-                className="strength-bar"
-                title={`strength ${item.strength.toFixed(2)}`}
-                style={{
-                  background: `linear-gradient(to right, hsl(${h} 34% 52%) ${Math.round(
-                    item.strength * 100,
-                  )}%, var(--line) ${Math.round(item.strength * 100)}%)`,
-                }}
-              />
-              <span className="mono rail-strength">{item.strength.toFixed(2)}</span>
-              <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={refresh} />
-            </div>
-          </div>
-        ))}
-      </div>
+      {paper === null && library !== null && (
+        <p className="run-fact">
+          {library.authors.join(", ")}
+          {library.year !== null ? ` · ${library.year}` : ""}
+          {library.journal !== null ? ` · ${library.journal}` : ""}
+        </p>
+      )}
+      <a className="crumb rail-full" href={`#/entity/${entity.entityId}`}>
+        open the full page →
+      </a>
     </>
   );
 }

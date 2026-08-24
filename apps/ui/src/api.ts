@@ -157,10 +157,19 @@ export interface ItemTag {
   strength: number;
 }
 
+/** The tags carried by the papers around an entity — a lab's subject matter. */
+export interface EntityTagGroup {
+  slug: string;
+  name: string;
+  facet: string;
+  papers: { entityId: string; title: string | null; strength: number; mark: Mark | null }[];
+}
+
 export interface EntityPage {
   entity: { entityId: string; kind: string; displayName: string | null };
   mark: Mark | null;
   tags: ItemTag[];
+  tagGroups: EntityTagGroup[];
   identifiers: { scheme: string; value: string }[];
   linksOut: EntityLink[];
   linksIn: EntityLink[];
@@ -261,28 +270,52 @@ export interface TagSummary {
   items: number;
 }
 
-export interface TagGraph {
+/**
+ * What the graph is drawn over. Tags, authors and affiliations are the same
+ * shape — things saved papers belong to — so one view serves all three.
+ */
+export type GraphMode = "tags" | "authors" | "orgs";
+
+export const graphModeLabels: Record<GraphMode, string> = {
+  tags: "tags",
+  authors: "authors",
+  orgs: "affiliations",
+};
+
+/** For the search box: "Find a tag", "Find an affiliation". */
+export const graphModeNoun: Record<GraphMode, string> = {
+  tags: "a tag",
+  authors: "an author",
+  orgs: "an affiliation",
+};
+
+export interface EntityGraph {
+  mode: GraphMode;
   minShared: number;
-  nodes: { slug: string; name: string; facet: string; items: number; weight: number }[];
+  minItems: number;
+  nodes: { key: string; name: string; facet: string; items: number; weight: number }[];
   /** `shared` counts the papers; `weight` sums how strongly they belong to both. */
   edges: { source: string; target: string; shared: number; weight: number }[];
 }
 
-export interface TagPaper {
+export interface GraphPaper {
   entityId: string;
   kind: string;
   title: string;
-  /** [slug, strength] pairs, strongest first. */
+  /** [key, strength] pairs, strongest first. */
   tags: [string, number][];
 }
 
-export interface TagPage {
-  slug: string;
+export interface GraphNodePage {
+  mode: GraphMode;
+  key: string;
   name: string;
-  description: string;
   facet: string;
-  related: { slug: string; name: string; shared: number }[];
-  items: {
+  description: string;
+  /** Set when the node is a real entity with a page of its own. */
+  entityId: string | null;
+  related: { key: string; name: string; shared: number }[];
+  papers: {
     entityId: string;
     kind: string;
     title: string | null;
@@ -419,10 +452,12 @@ export const api = {
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
   tags: (): Promise<{ vocabId: string | null; tagged: number; tags: TagSummary[] }> =>
     request("/api/tags"),
-  tagGraph: (minShared: number): Promise<TagGraph> =>
-    request(`/api/tags/graph?minShared=${minShared}`),
-  tagPapers: (): Promise<{ papers: TagPaper[] }> => request("/api/tags/papers"),
-  tag: (slug: string): Promise<TagPage> => request(`/api/tags/${encodeURIComponent(slug)}`),
+  graph: (mode: GraphMode, minShared: number, minItems: number): Promise<EntityGraph> =>
+    request(`/api/graph/${mode}?minShared=${minShared}&minItems=${minItems}`),
+  graphPapers: (mode: GraphMode, minItems: number): Promise<{ papers: GraphPaper[] }> =>
+    request(`/api/graph/${mode}/papers?minItems=${minItems}`),
+  graphNode: (mode: GraphMode, key: string): Promise<GraphNodePage> =>
+    request(`/api/graph/${mode}/node/${encodeURIComponent(key)}`),
   runTagger: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/tag", { regenerate }) as Promise<{ jobId: string }>,
   chats: (): Promise<{ chats: ChatSummary[] }> => request("/api/chats"),
