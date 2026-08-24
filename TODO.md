@@ -54,13 +54,14 @@ Needs websocket proxying for vite HMR. A Neon branch per preview (instead of
 the shared read-only role) is the matching data-layer upgrade: writable
 previews against copy-on-write production data.
 
-## Merge agent should refresh the sprite-hosted main UI
+## Merge agent could refresh the sprite-hosted main UI (optional)
 
-The main UI now also runs as an SSO-proxied service in the dedicated
-`nc-main-ui` sprite (main-ui reactor, cde2b18), resynced to trunk by a manual
-job. Once trusted, fold that resync into the merge agent's deploy step —
-alongside the two fly deploys — so approving a PR refreshes every serving
-surface. Note the deliberate trust-boundary exception recorded here: the
+The main UI runs as an SSO-proxied service in the dedicated `nc-main-ui`
+sprite and now tracks trunk on a 15-minute sha-gated cron (e88325a), so the
+worst-case staleness after a merge is ~15 minutes with no coupling. Folding a
+resync trigger into the merge agent's deploy step would tighten merges to ~0
+staleness — nice-to-have, no longer required. Note the deliberate
+trust-boundary exception recorded here: the
 `nc-main-ui` sprite receives the full DATABASE_URL (it *is* the app) behind
 fly.io SSO with `NC_TRUSTED_TRANSPORT=1`; dev-agent sandboxes must never get
 either — don't cargo-cult that env into `nc-dev-*` launches. `nc-main-ui`
