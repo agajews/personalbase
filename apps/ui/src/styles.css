@@ -998,9 +998,9 @@ button.mark.on {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0 8px;
-  margin: 6px 0 0;
+  margin: 8px 0 20px;
   font-family: var(--serif);
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .affiliation-link {

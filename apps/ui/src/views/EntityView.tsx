@@ -82,10 +82,14 @@ export function EntityView({ id }: { id: string }) {
     });
   };
   // A paper's affiliations are context you want before the abstract, not a
-  // link group at the foot of the page — they ride up top as a chip row.
+  // link group at the foot of the page — they ride up top as one serif row.
   const linksOut = dedupedLinks(page.linksOut);
   const affiliations = linksOut.filter((l) => l.linkType === "affiliated_org");
   const otherLinksOut = linksOut.filter((l) => l.linkType !== "affiliated_org");
+  // The paper card headlines the arXiv id already — don't print it twice.
+  const identifiers = page.identifiers.filter(
+    (i) => paper === null || i.scheme !== "arxiv_id",
+  );
 
   return (
     <div className="entity-page">
@@ -108,9 +112,9 @@ export function EntityView({ id }: { id: string }) {
           ))}
         </p>
       )}
-      {page.identifiers.length > 0 && (
+      {identifiers.length > 0 && (
         <p className="entity-idents">
-          {page.identifiers.map((i) => (
+          {identifiers.map((i) => (
             <span key={`${i.scheme}:${i.value}`} className="ident">
               {i.scheme}: {i.value}
             </span>
