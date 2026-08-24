@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type AppState } from "./api.js";
+import { useTheme } from "./theme.js";
 import { ago, HashChip, navTo } from "./ui.js";
 import { FeedView } from "./views/FeedView.js";
 import { FilterView } from "./views/FilterView.js";
@@ -80,6 +81,7 @@ export function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [theme, setTheme] = useTheme();
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
@@ -119,16 +121,26 @@ export function App() {
         <a className="wordmark" href="#/">
           personalbase
         </a>
-        <span className="header-facts">
-          {state !== null && (
-            <>
-              <span>{state.papers.total} papers in the log</span>
-              <span className="dot">·</span>
-              <span>newest {ago(state.papers.latest)}</span>
-              {ingesting === true && <span className="working">ingesting…</span>}
-            </>
-          )}
-        </span>
+        <div className="header-right">
+          <span className="header-facts">
+            {state !== null && (
+              <>
+                <span>{state.papers.total} papers in the log</span>
+                <span className="dot">·</span>
+                <span>newest {ago(state.papers.latest)}</span>
+                {ingesting === true && <span className="working">ingesting…</span>}
+              </>
+            )}
+          </span>
+          <button
+            className="theme-toggle"
+            title={theme === "dark" ? "Lights on" : "Lights off"}
+            aria-label={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+        </div>
       </header>
 
       <div className="columns">

@@ -8,6 +8,7 @@ import {
   EntityChip,
   formatDay,
   hashHue,
+  hueStyle,
   MarkButtons,
 } from "../ui.js";
 
@@ -36,7 +37,7 @@ function FeedRow({
           {top !== undefined && (
             <span
               className="confidence-fill"
-              style={{ width: `${top.confidence * 100}%`, background: `hsl(${hueFor(top.filter)} 45% 42%)` }}
+              style={{ width: `${top.confidence * 100}%`, ...hueStyle(hueFor(top.filter)) }}
             />
           )}
         </span>
@@ -60,11 +61,7 @@ function FeedRow({
           <span
             key={m.filter}
             className="hash-chip"
-            style={{
-              color: `hsl(${hueFor(m.filter)} 45% 30%)`,
-              background: `hsl(${hueFor(m.filter)} 50% 93%)`,
-              borderColor: `hsl(${hueFor(m.filter)} 35% 78%)`,
-            }}
+            style={hueStyle(hueFor(m.filter))}
           >
             {m.filter}
           </span>

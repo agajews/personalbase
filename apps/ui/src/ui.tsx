@@ -98,21 +98,22 @@ export function hashHue(hash: string): number {
   return parseInt(hash.slice(0, 6), 16) % 360;
 }
 
+/**
+ * Hand a hue to the stylesheet. The prompt picks the hue, the theme picks the
+ * lightness — so a chip that reads as pale-on-ink in the light stays the same
+ * identity, ink-on-pale, in the dark.
+ */
+export function hueStyle(hue: number): React.CSSProperties {
+  return { "--h": hue } as React.CSSProperties;
+}
+
 export function navTo(path: string): void {
   location.hash = path;
 }
 
 export function HashChip({ hash, label }: { hash: string; label?: string }) {
-  const h = hashHue(hash);
   return (
-    <span
-      className="hash-chip"
-      style={{
-        color: `hsl(${h} 45% 30%)`,
-        background: `hsl(${h} 50% 93%)`,
-        borderColor: `hsl(${h} 35% 78%)`,
-      }}
-    >
+    <span className="hash-chip" style={hueStyle(hashHue(hash))}>
       {label !== undefined && <span className="hash-chip-label">{label}</span>}#{hash.slice(0, 6)}
     </span>
   );
