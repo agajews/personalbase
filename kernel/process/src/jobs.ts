@@ -64,9 +64,11 @@ export async function completeJob(sql: Sql, jobId: string): Promise<void> {
 
 /**
  * Enqueues a job for each cron reactor that is due: no pending/running job
- * and no run started within the interval. Guarding on any run (including
- * failed ones) means a persistently failing reactor retries at most once per
- * interval rather than hot-looping on LLM spend.
+ * and no run started since the schedule's most recent tick — `now() -
+ * interval` for rolling schedules, the last occurrence of the fixed hour (in
+ * its time zone) for daily ones. Guarding on any run (including failed ones)
+ * means a persistently failing reactor retries at most once per tick rather
+ * than hot-looping on LLM spend.
  */
 export async function enqueueDueCronJobs(
   sql: Sql,
@@ -78,14 +80,23 @@ export async function enqueueDueCronJobs(
       continue;
     }
     const process = `reactor:${reactor.name}`;
+    const schedule = reactor.trigger.schedule;
+    const lastTick =
+      "intervalHours" in schedule
+        ? sql`now() - make_interval(hours => ${schedule.intervalHours})`
+        : sql`(date_trunc('day', now() at time zone ${schedule.timeZone})
+              + make_interval(hours => ${schedule.dailyAtHour})
+              - case when extract(hour from now() at time zone ${schedule.timeZone})
+                          < ${schedule.dailyAtHour}
+                     then interval '1 day' else interval '0 hours' end
+              ) at time zone ${schedule.timeZone}`;
     const rows = await sql`
       insert into jobs (process, payload)
       select ${process}, ${jsonb(sql, reactor.trigger.payload)}
       where not exists (
           select 1 from jobs where process = ${process} and status in ('pending', 'running'))
         and not exists (
-          select 1 from runs where process = ${process}
-            and started_at > now() - make_interval(hours => ${reactor.trigger.intervalHours}))
+          select 1 from runs where process = ${process} and started_at >= ${lastTick})
       returning job_id`;
     if (rows[0] !== undefined) {
       console.log(`cron: enqueued ${process}`);

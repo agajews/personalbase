@@ -111,7 +111,7 @@ export function makeQuestionWriterReactor(generate: QuestionGenerator): Reactor 
   return {
     kind: "reactor",
     name: "question-writer",
-    trigger: { kind: "cron", intervalHours: 24, payload: {} },
+    trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} },
     async run(ctx, input): Promise<ReactorEvent[]> {
       if (input.kind !== "job") {
         throw new Error("question-writer only supports job triggers");
