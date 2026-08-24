@@ -15,7 +15,9 @@ import {
   catchUpFolds,
   enqueueDueCronJobs,
   enqueueJob,
+  claimJob,
   processPendingJobs,
+  runClaimedJob,
   runReactor,
 } from "@nc/process";
 import { folds, reactors } from "./registry.js";
@@ -369,24 +371,58 @@ async function cmdDaemon(): Promise<void> {
       console.log(`requeued ${requeued.length} stale running job(s)`);
     }
     console.log("worker daemon running (folds, event reactors, cron, jobs); ctrl-c to stop");
-    while (true) {
-      // Backstop: one bad pass (a transient DB error, an unexpected throw)
-      // logs and waits rather than killing the daemon into a restart loop.
-      try {
-        await catchUpFolds(sql, coreRegistry, folds);
-        await catchUpEventReactors(sql, coreRegistry, reactors);
-        await enqueueDueCronJobs(sql, reactors);
-        // One job per pass, so folds catch up between jobs (a judging job
-        // enqueued after an ingest job then sees the ingested papers).
-        await processPendingJobs(sql, coreRegistry, reactors, 1);
-      } catch (error) {
-        console.error(
-          `daemon pass failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        await sleep(10_000);
+    // Two concurrent loops. Folds/event-reactors/cron keep their steady 2s
+    // cadence; jobs run in a continuous pump with a small concurrency pool so
+    // a long LLM job (an hour of paper judging) can never starve the quick
+    // session polls that live agent conversations depend on. SKIP LOCKED
+    // claims and the serialized append gate make concurrent jobs safe.
+    const jobConcurrency = 4;
+    const active = new Set<Promise<void>>();
+    const jobPump = async (): Promise<never> => {
+      while (true) {
+        try {
+          if (active.size < jobConcurrency) {
+            const job = await claimJob(sql);
+            if (job !== null) {
+              const tracked: Promise<void> = runClaimedJob(
+                sql,
+                coreRegistry,
+                reactors,
+                job,
+              ).then(
+                () => void active.delete(tracked),
+                () => void active.delete(tracked),
+              );
+              active.add(tracked);
+              continue; // fill remaining slots immediately
+            }
+          }
+        } catch (error) {
+          console.error(
+            `job pump failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        await sleep(1000);
       }
-      await sleep(2000);
-    }
+    };
+    const foldLoop = async (): Promise<never> => {
+      while (true) {
+        // Backstop: one bad pass (a transient DB error, an unexpected throw)
+        // logs and waits rather than killing the daemon into a restart loop.
+        try {
+          await catchUpFolds(sql, coreRegistry, folds);
+          await catchUpEventReactors(sql, coreRegistry, reactors);
+          await enqueueDueCronJobs(sql, reactors);
+        } catch (error) {
+          console.error(
+            `daemon pass failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          await sleep(10_000);
+        }
+        await sleep(2000);
+      }
+    };
+    await Promise.all([foldLoop(), jobPump()]);
   });
 }
 

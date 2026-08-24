@@ -22,6 +22,7 @@ export {
 } from "./jobs.js";
 export {
   runReactor,
+  runClaimedJob,
   catchUpEventReactors,
   processPendingJobs,
 } from "./reactorRunner.js";

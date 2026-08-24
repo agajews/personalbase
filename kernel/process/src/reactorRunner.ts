@@ -1,6 +1,6 @@
 import { appendEvents, jsonb, readEvents, type NewEvent, type Sql } from "@nc/log";
 import type { SchemaRegistry } from "@nc/schema";
-import { claimJob, completeJob, enqueueJob, failJob } from "./jobs.js";
+import { claimJob, completeJob, enqueueJob, failJob, type ClaimedJob } from "./jobs.js";
 import type { Reactor, ReactorCtx, ReactorInput, ReactorOutput } from "./types.js";
 
 const eventBatchSize = 100;
@@ -157,39 +157,62 @@ export async function catchUpEventReactors(
   }
 }
 
+/** Runs one claimed job to completion, retiring it as done/failed. */
+export async function runClaimedJob(
+  sql: Sql,
+  registry: SchemaRegistry,
+  reactors: readonly Reactor[],
+  job: ClaimedJob,
+): Promise<void> {
+  const reactor = reactors.find((r) => `reactor:${r.name}` === job.process);
+  if (reactor === undefined) {
+    await failJob(sql, job, `no registered reactor for process ${job.process}`);
+    return;
+  }
+  try {
+    await runReactor(sql, registry, reactor, { kind: "job", payload: job.payload }, job.jobId);
+    await completeJob(sql, job.jobId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`job ${job.jobId} (${job.process}) failed: ${message}`);
+    await failJob(sql, job, message);
+  }
+}
+
 /**
  * Claims and runs pending jobs. A job's process is "reactor:<name>". Returns
  * the number of jobs run (including failed ones, which are retried or marked
- * dead by the queue). `maxJobs` lets the daemon take one job per loop pass so
- * folds catch up between jobs — a judging job enqueued after an ingest job
- * then sees the ingested papers.
+ * dead by the queue). `concurrency` > 1 runs claimed jobs in a small pool —
+ * SKIP LOCKED claims and the serialized append gate make that safe, and it
+ * keeps a long LLM job (an hour of paper judging) from starving the quick
+ * session polls that live conversations depend on.
  */
 export async function processPendingJobs(
   sql: Sql,
   registry: SchemaRegistry,
   reactors: readonly Reactor[],
   maxJobs = Number.POSITIVE_INFINITY,
+  concurrency = 1,
 ): Promise<number> {
   let count = 0;
+  const active = new Set<Promise<void>>();
+  const runOne = (job: ClaimedJob) => runClaimedJob(sql, registry, reactors, job);
   while (count < maxJobs) {
-    const job = await claimJob(sql);
-    if (job === null) {
-      return count;
-    }
-    count += 1;
-    const reactor = reactors.find((r) => `reactor:${r.name}` === job.process);
-    if (reactor === undefined) {
-      await failJob(sql, job, `no registered reactor for process ${job.process}`);
+    if (active.size >= concurrency) {
+      await Promise.race(active);
       continue;
     }
-    try {
-      await runReactor(sql, registry, reactor, { kind: "job", payload: job.payload }, job.jobId);
-      await completeJob(sql, job.jobId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`job ${job.jobId} (${job.process}) failed: ${message}`);
-      await failJob(sql, job, message);
+    const job = await claimJob(sql);
+    if (job === null) {
+      break;
     }
+    count += 1;
+    const tracked: Promise<void> = runOne(job).then(
+      () => void active.delete(tracked),
+      () => void active.delete(tracked),
+    );
+    active.add(tracked);
   }
+  await Promise.all(active);
   return count;
 }
