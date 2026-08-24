@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import {
   api,
@@ -113,10 +114,19 @@ export function ChatView({ uid }: { uid: string | null }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
 
-  const refreshChats = () => void api.chats().then((r) => setChats(r.chats));
-  useEffect(refreshChats, []);
+  const refreshChats = () =>
+    void api
+      .chats()
+      .then((r) => setChats(r.chats))
+      .catch((e) => console.error("chat list fetch failed", e));
+  // Refresh on mount, on chat switch, and on a light interval — a single
+  // failed fetch (e.g. mid-restart) must not leave the rail empty forever.
+  useEffect(() => {
+    refreshChats();
+    const timer = setInterval(refreshChats, 20_000);
+    return () => clearInterval(timer);
+  }, [uid]);
 
   // Route → view: a different chat selected in the sidebar, or "new chat".
   useEffect(() => {
@@ -130,10 +140,6 @@ export function ChatView({ uid }: { uid: string | null }) {
       void api.chatTurns(uid).then((r) => setTurns(r.turns));
     }
   }, [uid]);
-
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns, busy]);
 
   const send = async () => {
     const message = input.trim();
@@ -202,7 +208,7 @@ export function ChatView({ uid }: { uid: string | null }) {
                   turn.text === "" && turn.streaming === true ? (
                     <span className="working">thinking…</span>
                   ) : (
-                    <Markdown remarkPlugins={[remarkGfm]}>{turn.text}</Markdown>
+                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{turn.text}</Markdown>
                   )
                 ) : (
                   turn.text
@@ -211,7 +217,6 @@ export function ChatView({ uid }: { uid: string | null }) {
             </div>
           ))}
           {error !== null && <div className="error">{error}</div>}
-          <div ref={bottom} />
         </div>
         <Composer large={false} input={input} setInput={setInput} busy={busy} onSend={() => void send()} />
       </div>
