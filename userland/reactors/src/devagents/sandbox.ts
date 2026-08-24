@@ -35,10 +35,11 @@ export interface SandboxProvider {
 let client: SpritesClient | undefined;
 
 function spritesClient(): SpritesClient {
-  const token = process.env["SPRITES_TOKEN"];
+  const token = process.env["SPRITES_TOKEN"]?.trim();
   if (token === undefined || token === "") {
     throw new Error("SPRITES_TOKEN is not set");
   }
+  // The API token is the full CLI-style string: org-slug/org-id/token-id/value.
   client ??= new SpritesClient(token);
   return client;
 }
