@@ -131,8 +131,16 @@ export type DevTaskTitled = z.infer<typeof devTaskTitledV1>;
 export const userDevmessageSentV1 = z.object({
   taskUid: z.uuid(),
   message: z.string().min(1),
+  /** Stop the agent's current turn first instead of queueing behind it. */
+  interrupt: z.boolean().default(false),
 });
 export type UserDevmessageSent = z.infer<typeof userDevmessageSentV1>;
+
+/** Retire a task: stop any running turn, destroy its sandbox, hide it. */
+export const userDevtaskArchivedV1 = z.object({
+  taskUid: z.uuid(),
+});
+export type UserDevtaskArchived = z.infer<typeof userDevtaskArchivedV1>;
 
 export const devRunStartedV1 = z.object({
   /** event_uid of the user.devtask.created event this run works on. */
@@ -268,6 +276,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
   { type: "dev.task.titled", versions: [{ schema: devTaskTitledV1 }] },
   { type: "user.devmessage.sent", versions: [{ schema: userDevmessageSentV1 }] },
+  { type: "user.devtask.archived", versions: [{ schema: userDevtaskArchivedV1 }] },
   { type: "dev.preview.started", versions: [{ schema: devPreviewStartedV1 }] },
   { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },

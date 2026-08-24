@@ -178,14 +178,17 @@ export function TaskView({ uid }: { uid: string }) {
   const queued = page.messages.filter(
     (m) => new Date(m.at).getTime() > latestFeatureStart,
   );
-  const send = async () => {
+  const turnActive = page.runs.some((r) => r.status === "running");
+  const send = async (interrupt: boolean) => {
     if (message.trim() === "") return;
     try {
-      await api.sendDevMessage(page.task.taskUid, message.trim());
+      await api.sendDevMessage(page.task.taskUid, message.trim(), interrupt);
       setSent(
-        page.task.status === "running"
-          ? "sent — the agent picks this up when its current turn finishes"
-          : "sent — a new turn starts within seconds",
+        interrupt
+          ? "sent — interrupting the current turn"
+          : turnActive
+            ? "sent — the agent picks this up when its current turn finishes"
+            : "sent — a new turn starts within seconds",
       );
       setMessage("");
       setError(null);
@@ -223,6 +226,21 @@ export function TaskView({ uid }: { uid: string }) {
         <button className="ghost" onClick={() => setShowSpec((s) => !s)}>
           {showSpec ? "hide spec" : "show spec"}
         </button>
+        {page.task.status !== "archived" && page.task.status !== "merged" && (
+          <button
+            className="ghost archive-button"
+            title="Stop the agent, destroy its sandbox, and move this task to the archived list."
+            onClick={() => {
+              if (window.confirm("Archive this task? The agent stops and its sandbox is destroyed.")) {
+                void api
+                  .archiveDevTask(page.task.taskUid)
+                  .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+              }
+            }}
+          >
+            Archive
+          </button>
+        )}
       </div>
       {showSpec && <pre className="task-spec">{page.task.spec}</pre>}
       {error !== null && <div className="error">{error}</div>}
@@ -280,13 +298,23 @@ export function TaskView({ uid }: { uid: string }) {
             rows={2}
             placeholder="Send the agent a follow-up or clarification — it resumes the same session on the same branch."
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(false);
             }}
           />
           <div className="dev-composer-row">
-            <button onClick={() => void send()} disabled={message.trim() === ""}>
-              Send to agent
+            <button onClick={() => void send(false)} disabled={message.trim() === ""}>
+              {turnActive ? "Queue for agent" : "Send to agent"}
             </button>
+            {turnActive && (
+              <button
+                className="interrupt-button"
+                onClick={() => void send(true)}
+                disabled={message.trim() === ""}
+                title="Stop the current turn and deliver this message immediately; work so far is kept."
+              >
+                Interrupt &amp; send
+              </button>
+            )}
             {sent !== null && <span className="dev-composer-hint">{sent}</span>}
           </div>
         </div>

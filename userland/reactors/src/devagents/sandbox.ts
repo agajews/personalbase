@@ -30,6 +30,12 @@ export interface Sandbox {
     env: Readonly<Record<string, string>>,
   ): Promise<void>;
   poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll>;
+  /**
+   * Stops a run mid-turn (kills its process group) and marks it exited with
+   * an interrupted result, so the poll chain closes it out gracefully.
+   * Idempotent; a no-op if the run already exited.
+   */
+  interrupt(runDir: string): Promise<void>;
   /** The sandbox's SSO-gated HTTPS URL (null until known). */
   url(): Promise<string | null>;
   /**
@@ -130,12 +136,26 @@ class SpriteSandbox implements Sandbox {
     // guard makes this idempotent: a retried start (e.g. after a cold-start
     // timeout on a launch that actually went through) can't run the script
     // twice. Generous timeout — the first exec on a fresh sprite can be slow.
+    // The setsid child is its own process-group leader; its pid is recorded
+    // so interrupt() can kill the whole turn's process tree.
     await this.exec(
       `cd ${runDir} && ( [ -f launched ] || { touch launched; ` +
         `setsid bash -c 'bash ${runDir}/run.sh > ${runDir}/run.log 2>&1; ` +
-        `echo $? > ${runDir}/exit-code' < /dev/null > /dev/null 2>&1 & } ); echo launched`,
+        `echo $? > ${runDir}/exit-code' < /dev/null > /dev/null 2>&1 & ` +
+        `echo $! > ${runDir}/leader.pid; } ); echo launched`,
       180_000,
       { ...env, NC_RUN_DIR: runDir },
+    );
+  }
+
+  async interrupt(runDir: string): Promise<void> {
+    SpriteSandbox.checkRunDir(runDir);
+    await this.exec(
+      `cd ${runDir} && if [ ! -f exit-code ] && [ -f leader.pid ]; then ` +
+        `kill -9 -- -$(cat leader.pid) 2>/dev/null; ` +
+        `echo '{"interrupted":true}' > result.json; echo 130 > exit-code; ` +
+        `echo '[nc] turn interrupted by the user' >> run.log; fi; echo done`,
+      60_000,
     );
   }
 
@@ -182,16 +202,17 @@ class SpriteSandbox implements Sandbox {
     const sprite = await this.handle();
     const services = await sprite.listServices();
     const have = new Set(services.map((s) => s.name));
-    const env = {
-      PATH: "/nc/bin:/root/.local/bin:/home/sprite/.local/bin:/usr/local/bin:/usr/bin:/bin",
-    };
+    // PREPEND to the service's base PATH rather than replacing it — the base
+    // carries /.sprite/bin (node itself); overriding it leaves pnpm with no
+    // node to run on.
+    const withPath = (cmd: string) =>
+      `export PATH="/nc/bin:$HOME/.local/bin:$PATH"; ${cmd}`;
     if (!have.has("preview-api")) {
       await sprite.createService("preview-api", {
         cmd: "bash",
-        args: ["-c", "pnpm exec tsx apps/ui/src/server.ts"],
+        args: ["-c", withPath("pnpm exec tsx apps/ui/src/server.ts")],
         dir: "/nc/repo",
         env: {
-          ...env,
           DATABASE_URL: previewDatabaseUrl,
           NC_PREVIEW: "1",
           HOST: "127.0.0.1",
@@ -202,9 +223,8 @@ class SpriteSandbox implements Sandbox {
     if (!have.has("preview-vite")) {
       await sprite.createService("preview-vite", {
         cmd: "bash",
-        args: ["-c", "pnpm --filter @nc/ui exec vite --host 0.0.0.0 --port 5173"],
+        args: ["-c", withPath("pnpm --filter @nc/ui exec vite --host 0.0.0.0 --port 5173")],
         dir: "/nc/repo",
-        env,
         needs: ["preview-api"],
         // This is what the sandbox's HTTPS URL proxies to.
         httpPort: 5173,

@@ -376,8 +376,10 @@ export const api = {
     post("/api/dev/tasks", { spec }) as Promise<{ taskUid: string }>,
   requestMerge: (taskUid: string, prNumber: number): Promise<unknown> =>
     post("/api/dev/merge", { taskUid, prNumber }),
-  sendDevMessage: (taskUid: string, message: string): Promise<unknown> =>
-    post("/api/dev/message", { taskUid, message }),
+  sendDevMessage: (taskUid: string, message: string, interrupt = false): Promise<unknown> =>
+    post("/api/dev/message", { taskUid, message, interrupt }),
+  archiveDevTask: (taskUid: string): Promise<unknown> =>
+    post("/api/dev/archive", { taskUid }),
 };
 
 export interface DevRunSummary {

@@ -76,6 +76,14 @@ class FakeSandbox implements Sandbox {
     };
   }
 
+  async interrupt(runDir: string): Promise<void> {
+    const run = this.run(runDir);
+    if (run.exitCode === null) {
+      run.exitCode = 130;
+      run.result = { interrupted: true };
+    }
+  }
+
   async destroy(): Promise<void> {
     this.destroyed = true;
   }
@@ -298,6 +306,83 @@ describe("dev-agent flow", () => {
     expect(preamble[0]!["content"]).toContain("Also show seconds");
   });
 
+  test("an interrupt message stops the current turn and starts the next", async () => {
+    // Kick off a turn and leave it running.
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devmessage.sent",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { taskUid, message: "Try a bolder color.", interrupt: false },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    expect(await duePolls()).toBe(1); // message job launches the turn
+    await catchUpFold(sql, coreRegistry, devFold);
+
+    // Interrupt mid-turn.
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devmessage.sent",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { taskUid, message: "Stop — use the muted palette instead.", interrupt: true },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    // Interrupt job kills the turn; the poll job closes it; the waiting
+    // message job launches the resume turn. The daemon interleaves folds
+    // between job passes — mirror that here, since the message job reads
+    // dev_runs to decide whether the task is idle.
+    for (let i = 0; i < 6; i++) {
+      await duePolls();
+      await catchUpFold(sql, coreRegistry, devFold);
+    }
+
+    const runs = await sql`
+      select run_uid, status, summary from dev_runs
+      where task_uid = ${taskUid} and kind = 'feature'
+      order by started_at`;
+    const interrupted = runs.find((r) => r["summary"] === "interrupted by the user");
+    expect(interrupted).toBeDefined();
+    expect(interrupted!["status"]).toBe("succeeded");
+    const last = runs[runs.length - 1]!;
+    expect(last["status"]).toBe("running"); // the resume turn is underway
+    const preamble = await sql`
+      select content from dev_transcript_chunks
+      where run_uid = ${last["run_uid"]} and chunk_seq = 0`;
+    expect(preamble[0]!["content"]).toContain("muted palette");
+
+    // Let the resume turn finish so later tests see an idle task.
+    const started = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["dev.run.started"],
+      limit: 20,
+    });
+    const lastStart = started[started.length - 1]!.payload as {
+      sandbox: string;
+      runUid: string;
+      branch: string;
+    };
+    const box = boxes.get(lastStart.sandbox)!;
+    const turn = box.run(runDirFor(lastStart.runUid));
+    turn.exitCode = 0;
+    turn.result = {
+      prNumber: 7,
+      prUrl: "https://github.com/me/repo/pull/7",
+      branch: lastStart.branch,
+      title: "Add a widget",
+    };
+    for (let i = 0; i < 4; i++) {
+      await duePolls();
+      await catchUpFold(sql, coreRegistry, devFold);
+    }
+    // Fully drained: later tests start from an idle queue.
+    expect(await duePolls()).toBe(0);
+  });
+
   test("merge approval merges the PR and deploys", async () => {
     await appendEvents(sql, coreRegistry, [
       {
@@ -382,5 +467,69 @@ describe("dev-agent flow", () => {
     const tasks = await sql`
       select status from dev_tasks where title = 'Doomed task'`;
     expect(tasks[0]!["status"]).toBe("failed");
+  });
+
+  test("archiving stops the turn, destroys the sandbox, and mutes messages", async () => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devtask.created",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { spec: "A task to be archived mid-flight." },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    await catchUpFold(sql, coreRegistry, devFold);
+    const started = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["dev.run.started"],
+      limit: 30,
+    });
+    const last = started[started.length - 1]!.payload as {
+      taskUid: string;
+      sandbox: string;
+      runUid: string;
+    };
+    const box = boxes.get(last.sandbox)!;
+    expect(box.destroyed).toBe(false);
+
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devtask.archived",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { taskUid: last.taskUid },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    await catchUpFold(sql, coreRegistry, devFold);
+
+    expect(box.destroyed).toBe(true);
+    const task = await sql`
+      select status from dev_tasks where task_uid = ${last.taskUid}`;
+    expect(task[0]!["status"]).toBe("archived");
+    const run = await sql`
+      select status, summary from dev_runs where run_uid = ${last.runUid}`;
+    expect(run[0]!["status"]).toBe("succeeded");
+    expect(run[0]!["summary"]).toBe("archived by the user");
+
+    // Messages to an archived task are dropped without launching anything.
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devmessage.sent",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { taskUid: last.taskUid, message: "hello?", interrupt: false },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    await duePolls();
+    await catchUpFold(sql, coreRegistry, devFold);
+    const runs = await sql`
+      select count(*)::int as n from dev_runs where task_uid = ${last.taskUid}`;
+    expect(runs[0]!["n"]).toBe(1);
   });
 });

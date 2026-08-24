@@ -1,4 +1,5 @@
 import {
+  userDevtaskArchivedV1,
   devPreviewStartedV1,
   devPrMergedV1,
   devPrOpenedV1,
@@ -22,9 +23,10 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 4, // dev_messages: queued follow-ups are visible before their turn
+  version: 5, // archived tasks
   consumes: [
     "user.devtask.created",
+    "user.devtask.archived",
     "dev.task.titled",
     "dev.preview.started",
     "user.devmessage.sent",
@@ -145,6 +147,13 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
       where task_uid = ${preview.taskUid}`;
     return;
   }
+  if (event.type === "user.devtask.archived") {
+    const archived = userDevtaskArchivedV1.parse(event.payload);
+    await tx`
+      update dev_tasks set status = 'archived', preview_url = null, updated_seq = ${seq}
+      where task_uid = ${archived.taskUid}`;
+    return;
+  }
   if (event.type === "user.devmessage.sent") {
     const message = userDevmessageSentV1.parse(event.payload);
     await tx`
@@ -170,7 +179,7 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
     if (run.kind === "feature") {
       await tx`
         update dev_tasks set status = 'running', updated_seq = ${seq}
-        where task_uid = ${run.taskUid}`;
+        where task_uid = ${run.taskUid} and status <> 'archived'`;
     }
     return;
   }
@@ -182,7 +191,7 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
       where run_uid = ${pr.runUid}`;
     await tx`
       update dev_tasks set status = 'pr_open', updated_seq = ${seq}
-      where task_uid = ${pr.taskUid}`;
+      where task_uid = ${pr.taskUid} and status <> 'archived'`;
     return;
   }
   if (event.type === "dev.pr.merged") {

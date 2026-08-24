@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Reactor, ReactorEvent, ReactorResult } from "@nc/process";
-import { userDevmessageSentV1, userDevtaskCreatedV1 } from "@nc/schema";
-import { devPollPayload, finishedEvent, launchRun, pollRun } from "./harness.js";
+import {
+  userDevmessageSentV1,
+  userDevtaskArchivedV1,
+  userDevtaskCreatedV1,
+} from "@nc/schema";
+import { devPollPayload, finishedEvent, launchRun, pollRun, runDirFor } from "./harness.js";
 import type { SandboxProvider } from "./sandbox.js";
 import { spritesProvider } from "./sandbox.js";
 import { anthropicTitler, fallbackTitle, type Titler } from "./titler.js";
@@ -29,6 +33,7 @@ const devMessagePayload = z.object({
   /** event_uid of the user.devmessage.sent event — keys the dedupe chain. */
   msgUid: z.uuid(),
   message: z.string().min(1),
+  interrupt: z.boolean().default(false),
   waits: z.number().int().nonnegative(),
 });
 
@@ -104,7 +109,10 @@ export function makeDevAgentReactor(
   return {
     kind: "reactor",
     name: "dev-agent",
-    trigger: { kind: "event", consumes: ["user.devtask.created", "user.devmessage.sent"] },
+    trigger: {
+      kind: "event",
+      consumes: ["user.devtask.created", "user.devmessage.sent", "user.devtask.archived"],
+    },
     async run(ctx, input): Promise<ReactorResult> {
       if (input.kind === "event" && input.event.type === "user.devtask.created") {
         const task = userDevtaskCreatedV1.parse(input.event.payload);
@@ -173,6 +181,32 @@ export function makeDevAgentReactor(
         };
       }
 
+      if (input.kind === "event" && input.event.type === "user.devtask.archived") {
+        // Stop everything: close any running turns as archived and destroy
+        // the task's sandboxes. Dangling poll jobs then no-op (their
+        // finished events dedupe against the ones emitted here).
+        const archived = userDevtaskArchivedV1.parse(input.event.payload);
+        const runs = await ctx.sql`
+          select run_uid, status, sandbox from dev_runs
+          where task_uid = ${archived.taskUid} and kind = 'feature'`;
+        const events: ReactorEvent[] = runs
+          .filter((r) => r["status"] === "running")
+          .map((r) => finishedEvent(
+            { taskUid: archived.taskUid, runUid: r["run_uid"] },
+            "succeeded",
+            "archived by the user",
+            null,
+          ));
+        for (const sandbox of new Set(runs.map((r) => r["sandbox"] as string))) {
+          try {
+            await provider.open(sandbox).destroy();
+          } catch {
+            // already gone; archiving is best-effort cleanup
+          }
+        }
+        return events;
+      }
+
       if (input.kind === "event") {
         // user.devmessage.sent: hand off to a job so the wait-for-idle loop
         // runs on the retry-friendly job chain, not the event checkpoint.
@@ -187,6 +221,7 @@ export function makeDevAgentReactor(
                 taskUid: message.taskUid,
                 msgUid: input.event.eventUid,
                 message: message.message,
+                interrupt: message.interrupt,
                 waits: 0,
               },
               dedupeKey: `dev:${input.event.eventUid}:message`,
@@ -214,7 +249,10 @@ export function makeDevAgentReactor(
       const tasks = await ctx.sql`
         select status, title from dev_tasks where task_uid = ${payload.taskUid}`;
       const task = tasks[0];
-      if (task === undefined || task["status"] === "merged" || task["status"] === "merging") {
+      if (
+        task === undefined ||
+        ["merged", "merging", "archived"].includes(task["status"] as string)
+      ) {
         return []; // nothing to talk to anymore
       }
       const runs = await ctx.sql`
@@ -225,7 +263,13 @@ export function makeDevAgentReactor(
       if (last === undefined) {
         return []; // no turn ever launched (config failure); nothing to resume
       }
-      if (runs.some((r) => r["status"] === "running")) {
+      const running = runs.find((r) => r["status"] === "running");
+      if (running !== undefined) {
+        if (payload.interrupt) {
+          // Stop the turn mid-flight (idempotent); the poll chain closes the
+          // run as interrupted within seconds and the wait below picks up.
+          await provider.open(running["sandbox"]).interrupt(runDirFor(running["run_uid"]));
+        }
         if (payload.waits + 1 >= maxMessageWaits) {
           return []; // turn never went idle; drop rather than queue forever
         }
@@ -235,7 +279,7 @@ export function makeDevAgentReactor(
             {
               process: "reactor:dev-agent",
               payload: { ...payload, waits: payload.waits + 1 },
-              runAfterSeconds: messageWaitSeconds,
+              runAfterSeconds: payload.interrupt ? 5 : messageWaitSeconds,
               dedupeKey: `dev:${payload.msgUid}:wait:${payload.waits + 1}`,
             },
           ],

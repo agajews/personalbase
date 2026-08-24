@@ -1398,6 +1398,39 @@ footer {
   white-space: nowrap;
 }
 
+.dev-archived {
+  margin-top: 18px;
+  color: var(--muted);
+}
+
+.dev-archived summary {
+  cursor: pointer;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.dev-task-row.archived {
+  opacity: 0.7;
+}
+
+.dev-status-archived {
+  opacity: 0.7;
+}
+
+.archive-button {
+  margin-left: auto;
+}
+
+.interrupt-button {
+  border-color: #c9a44a;
+  color: #7a5a17;
+}
+
+.interrupt-button:hover:not(:disabled) {
+  background: #c9a44a;
+  color: #2c2007;
+}
+
 /* ---- small screens ---- */
 
 @media (max-width: 760px) {

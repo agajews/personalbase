@@ -242,6 +242,16 @@ export async function pollRun(
       if (options.destroySandboxOnSuccess) {
         await sandbox.destroy();
       }
+    } else if (
+      typeof poll.result === "object" &&
+      poll.result !== null &&
+      "interrupted" in poll.result
+    ) {
+      // A user interrupt is a graceful end: the session keeps everything up
+      // to the kill, and the queued message starts the next turn.
+      events.push(
+        finishedEvent(payload, "succeeded", "interrupted by the user", null),
+      );
     } else {
       const resultError =
         typeof poll.result === "object" && poll.result !== null && "error" in poll.result

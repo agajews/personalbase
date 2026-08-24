@@ -115,11 +115,15 @@ if ! command -v claude > /dev/null 2>&1; then
   npm install -g @anthropic-ai/claude-code > "$NC_RUN_DIR/claude-install.log" 2>&1 \
     || { tail -20 "$NC_RUN_DIR/claude-install.log"; fail "claude code install failed"; }
 fi
-echo "[nc] starting claude (resume=$DEV_RESUME)"
-if [ "$DEV_RESUME" = "1" ]; then
+# Resume iff the session exists on disk (robust to a turn interrupted before
+# the session was created).
+SESSION_FILE=$(ls "$HOME"/.claude/projects/*/"$DEV_SESSION_ID".jsonl 2>/dev/null | head -1)
+if [ -n "$SESSION_FILE" ]; then
+  echo "[nc] starting claude (resuming session)"
   claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --resume "$DEV_SESSION_ID" \
     --output-format stream-json --verbose --dangerously-skip-permissions
 else
+  echo "[nc] starting claude (new session)"
   claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --session-id "$DEV_SESSION_ID" \
     --output-format stream-json --verbose --dangerously-skip-permissions
 fi

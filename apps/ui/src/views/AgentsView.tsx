@@ -10,6 +10,7 @@ const statusLabel: Record<string, string> = {
   merging: "merging",
   merged: "merged",
   failed: "failed",
+  archived: "archived",
 };
 
 export function DevStatusChip({ status }: { status: string }) {
@@ -66,7 +67,7 @@ export function AgentsView() {
       {tasks === null && <div className="empty">loading…</div>}
       {tasks !== null && tasks.length === 0 && <div className="empty">No tasks yet.</div>}
       {tasks !== null &&
-        tasks.map((t) => (
+        tasks.filter((t) => t.status !== "archived").map((t) => (
           <button
             key={t.taskUid}
             className="dev-task-row"
@@ -90,6 +91,28 @@ export function AgentsView() {
             </span>
           </button>
         ))}
+      {tasks !== null && tasks.some((t) => t.status === "archived") && (
+        <details className="dev-archived">
+          <summary>
+            Archived ({tasks.filter((t) => t.status === "archived").length})
+          </summary>
+          {tasks
+            .filter((t) => t.status === "archived")
+            .map((t) => (
+              <button
+                key={t.taskUid}
+                className="dev-task-row archived"
+                onClick={() => navTo(`/task/${t.taskUid}`)}
+              >
+                <DevStatusChip status={t.status} />
+                <span className="dev-task-title">{t.title}</span>
+                <span className="dev-task-meta">
+                  <span>{ago(t.createdAt)}</span>
+                </span>
+              </button>
+            ))}
+        </details>
+      )}
     </section>
   );
 }

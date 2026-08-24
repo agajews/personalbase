@@ -962,6 +962,7 @@ app.post("/api/dev/tasks", async (c) => {
 const devMessageBody = z.object({
   taskUid: z.uuid(),
   message: z.string().min(1),
+  interrupt: z.boolean().default(false),
 });
 
 // A follow-up/clarification to a task's agent: the dev-agent reactor resumes
@@ -978,6 +979,25 @@ app.post("/api/dev/message", async (c) => {
       payload: body,
     },
   ]);
+  return c.json({ ok: true });
+});
+
+const devArchiveBody = z.object({ taskUid: z.uuid() });
+
+// Retires a task: the dev-agent reactor stops any running turn and destroys
+// the task's sandboxes; the fold moves it to the archived list.
+app.post("/api/dev/archive", async (c) => {
+  const body = devArchiveBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.devtask.archived",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
   return c.json({ ok: true });
 });
 
