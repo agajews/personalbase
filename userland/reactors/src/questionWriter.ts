@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
@@ -35,8 +35,8 @@ const generatorOutput = z.object({
   notes: z.string(),
 });
 
-const generatorSystem = `You write ONE matrix/vector calculus exercise per day
-for Alex, an ML researcher, following a progressive curriculum:
+const generatorSystem = `You write ONE small matrix/vector calculus exercise
+per day for Alex, an ML researcher, following a progressive curriculum:
 
 1. Gradients of linear and quadratic forms (aᵀx, xᵀAx, bilinear forms).
 2. Jacobians and the vector chain rule.
@@ -46,6 +46,14 @@ for Alex, an ML researcher, following a progressive curriculum:
 6. Hessians and second-order structure.
 7. Full backprop derivations for real layers (attention, layernorm, losses).
 
+Alex's instruction on the style of the questions, verbatim:
+
+> let's make them simpler and more concise, no need for a lot of preamble or
+> multiple parts, just some interesting small problem to work on
+
+Write the question in markdown with $...$ / $$...$$ LaTeX; if a layout
+convention matters, settle it in one short parenthetical.
+
 Progression policy, judged from the history you are shown (recent questions
 with their solution discussions): if the last solution was correct and came
 easily, step forward; if it had errors or the discussion showed struggle,
@@ -54,10 +62,8 @@ undiscussed, re-pose its skill differently rather than advancing; and roughly
 every fifth question, revisit a skill from an earlier level (retention beats
 momentum). Never repeat an exercise verbatim.
 
-The question: self-contained, precise about notation and layout convention
-(state numerator/denominator layout when it matters), solvable on paper in
-10-20 minutes, in markdown with $...$ / $$...$$ LaTeX. notes: one sentence on
-what it practices. Start at level 1 when there is no history.`;
+notes: one sentence on what it practices. Start at level 1 when there is no
+history.`;
 
 let client: Anthropic | undefined;
 
@@ -92,6 +98,9 @@ export const anthropicQuestionGenerator: QuestionGenerator = async (history) => 
 
 export const questionWriterJobPayload = z.object({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** Re-pose the day's question (e.g. after a prompt change); the questions
+   * fold keeps only the latest posing per (topic, day). */
+  replace: z.boolean().optional(),
 });
 
 const topic = "matrix-calculus";
@@ -131,6 +140,13 @@ export function makeQuestionWriterReactor(generate: QuestionGenerator): Reactor 
       }
       const { generated, usage } = await generate(history);
       ctx.recordUsage(usage);
+      // A replace re-pose keys on the generated content, so retries of one
+      // run still dedupe while a fresh generation supersedes (the fold keeps
+      // only the latest posing per topic+day).
+      const idempotencyKey =
+        payload.replace === true
+          ? `question:${topic}:${day}:${createHash("sha256").update(generated.question).digest("hex").slice(0, 8)}`
+          : `question:${topic}:${day}`;
       return [
         {
           type: "study.question.posed",
@@ -144,7 +160,7 @@ export function makeQuestionWriterReactor(generate: QuestionGenerator): Reactor 
             question: generated.question,
             notes: generated.notes,
           },
-          idempotencyKey: `question:${topic}:${day}`,
+          idempotencyKey,
         },
       ];
     },
