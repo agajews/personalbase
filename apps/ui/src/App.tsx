@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type AppState } from "./api.js";
-import { ago, BusyButton, HashChip, navTo } from "./ui.js";
+import { ago, HashChip, navTo } from "./ui.js";
 import { FeedView } from "./views/FeedView.js";
 import { FilterView } from "./views/FilterView.js";
 import { EntityView } from "./views/EntityView.js";
@@ -77,8 +77,6 @@ export function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [ingestDays, setIngestDays] = useState(3);
-  const [categories, setCategories] = useState("cs.LG, cs.CL, cs.AI");
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
@@ -107,16 +105,6 @@ export function App() {
     const timer = setInterval(() => void refresh(), 3000);
     return () => clearInterval(timer);
   }, [refresh]);
-
-  const act = async (f: () => Promise<unknown>) => {
-    try {
-      await f();
-      setError(null);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
 
   const ingesting = state?.jobs.some(
     (j) => j.process === "reactor:arxiv" || j.process === "reactor:lab-publications",
@@ -232,44 +220,6 @@ export function App() {
           <button className="ghost" onClick={() => navTo("/filter-new")}>
             + New filter
           </button>
-
-          <div className="rail-label ingest-label">Ingest arXiv</div>
-          <div className="ingest">
-            <label>
-              window
-              <select value={ingestDays} onChange={(e) => setIngestDays(Number(e.target.value))}>
-                <option value={1}>last day</option>
-                <option value={3}>last 3 days</option>
-                <option value={7}>last 7 days</option>
-              </select>
-            </label>
-            <label>
-              categories
-              <input
-                value={categories}
-                onChange={(e) => setCategories(e.target.value)}
-                placeholder="cs.LG, cs.CL — empty for all"
-              />
-            </label>
-            <BusyButton
-              onClick={() =>
-                act(() =>
-                  api.ingest(
-                    ingestDays,
-                    categories.split(",").map((c) => c.trim()).filter((c) => c !== ""),
-                  ),
-                )
-              }
-            >
-              Ingest papers
-            </BusyButton>
-            <BusyButton
-              title="Read the publication pages of OpenAI, DeepMind, Anthropic, and Meta"
-              onClick={() => act(() => api.ingestLabs())}
-            >
-              Ingest lab publications
-            </BusyButton>
-          </div>
 
           <div className="rail-label ingest-label">Database</div>
           <button
