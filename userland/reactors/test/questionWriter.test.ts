@@ -91,5 +91,17 @@ describe("question-writer", () => {
     const all = await sql`select day, level from study_questions order by day`;
     expect(all).toHaveLength(2);
     expect(all[1]!["level"]).toBe(2);
+
+    // Replace mode re-poses the day; the fold keeps only the latest posing.
+    level = 3;
+    const replaced = await runReactor(sql, coreRegistry, reactor, {
+      kind: "job",
+      payload: { day: "2026-08-24", replace: true },
+    });
+    expect(replaced.appended).toBe(1);
+    await catchUpFolds(sql, coreRegistry, folds);
+    const day2 = await sql`select level from study_questions where day = '2026-08-24'`;
+    expect(day2).toHaveLength(1);
+    expect(day2[0]!["level"]).toBe(3);
   });
 });
