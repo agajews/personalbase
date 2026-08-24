@@ -103,16 +103,16 @@ export function EntityView({ id }: { id: string }) {
 
       {paper !== null && (
         <section className="entity-detail">
+          <a
+            className="paper-link"
+            href={`https://arxiv.org/abs/${paper.arxiv_id}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            arxiv.org/abs/{paper.arxiv_id}v{paper.arxiv_version} ↗
+          </a>
           <p className="verdict-authors">
-            {(paper.authors as string[]).join(", ")} · {paper.categories.join(", ")} ·{" "}
-            <a
-              className="arxiv-id"
-              href={`https://arxiv.org/abs/${paper.arxiv_id}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {paper.arxiv_id}v{paper.arxiv_version}
-            </a>
+            {(paper.authors as string[]).join(", ")} · {paper.categories.join(", ")}
           </p>
           <p className="verdict-abstract">{paper.abstract}</p>
           <p className="run-fact">
