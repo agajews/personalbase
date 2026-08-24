@@ -80,13 +80,23 @@ export async function launchRun(
   args: LaunchArgs,
 ): Promise<ReactorOutput> {
   const sandboxName = `nc-dev-${args.runUid.slice(0, 8)}`;
-  try {
-    const sandbox = await provider.create(sandboxName);
-    await sandbox.start(args.files, args.env);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  // Cold sandboxes are occasionally slow to take their first command; retry
+  // the launch a couple of times (start() is idempotent) before failing.
+  let lastError = "";
+  let started = false;
+  for (let attempt = 0; attempt < 3 && !started; attempt++) {
+    try {
+      const sandbox = await provider.create(sandboxName);
+      await sandbox.start(args.files, args.env);
+      started = true;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  if (!started) {
     return {
-      events: [finishedEvent(args, "failed", null, `sandbox launch failed: ${message}`)],
+      events: [finishedEvent(args, "failed", null, `sandbox launch failed: ${lastError}`)],
     };
   }
   const firstPoll: DevPollPayload = {

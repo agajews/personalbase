@@ -96,12 +96,15 @@ class SpriteSandbox implements Sandbox {
       await fs.writeFile(name, content);
     }
     // setsid detaches the run from this exec's session so it survives the
-    // connection closing; the run inherits env from this exec.
+    // connection closing; the run inherits env from this exec. The `launched`
+    // guard makes this idempotent: a retried start (e.g. after a cold-start
+    // timeout on a launch that actually went through) can't run the script
+    // twice. Generous timeout — the first exec on a fresh sprite can be slow.
     await this.exec(
-      "cd /nc && rm -f exit-code result.json && touch run.log && " +
-        "setsid bash -c 'bash /nc/run.sh > /nc/run.log 2>&1; echo $? > /nc/exit-code' " +
-        "< /dev/null > /dev/null 2>&1 & echo launched",
-      60_000,
+      "cd /nc && ( [ -f launched ] || { touch launched; rm -f exit-code result.json; " +
+        "touch run.log; setsid bash -c 'bash /nc/run.sh > /nc/run.log 2>&1; " +
+        "echo $? > /nc/exit-code' < /dev/null > /dev/null 2>&1 & } ); echo launched",
+      180_000,
       env,
     );
   }
