@@ -44,6 +44,7 @@ export {
   agentTaxonomyProposedV1,
   agentTagVocabProposedV1,
   agentItemTaggedV1,
+  agentItemTaggedV2,
   userChatMessageSentV1,
   agentChatRepliedV1,
   surfaceDayResurfacedV1,

@@ -41,9 +41,15 @@ export type VocabFn = (
   titles: readonly string[],
 ) => Promise<{ tags: VocabTag[]; usage: Usage }>;
 
+/** A tag and how central it is to the item, in [0, 1]. */
+export interface WeightedTag {
+  readonly slug: string;
+  readonly strength: number;
+}
+
 export interface ItemTags {
   readonly index: number;
-  readonly slugs: readonly string[];
+  readonly tags: readonly WeightedTag[];
 }
 
 export type TagFn = (
@@ -85,10 +91,12 @@ export const anthropicVocabFn: VocabFn = async (titles) => {
   client ??= new Anthropic();
   // Streamed: a whole-library vocabulary is a long generation, and the SDK
   // refuses non-streaming requests that may outlast its 10-minute ceiling.
+  // The budget is generous because it covers thinking as well as the output,
+  // and a truncated vocabulary is unparseable JSON rather than a short list.
   const response = await client.messages
     .stream({
       model: "claude-opus-5",
-      max_tokens: 32000,
+      max_tokens: 64000,
       system: vocabSystem,
       messages: [
         { role: "user", content: titles.map((t, i) => `${i + 1}. ${t}`).join("\n") },
@@ -112,7 +120,9 @@ const tagOutput = z.object({
   items: z.array(
     z.object({
       index: z.number().int(),
-      slugs: z.array(z.string()),
+      tags: z.array(
+        z.object({ slug: z.string(), strength: z.number().min(0).max(1) }),
+      ),
     }),
   ),
 });
@@ -123,21 +133,31 @@ function tagSystem(vocab: readonly VocabTag[]): string {
 ${vocab.map((t) => `- ${t.slug}: ${t.name} — ${t.description}`).join("\n")}
 
 For each numbered item (title, usually an abstract excerpt) return its index
-and the slugs that genuinely apply — typically 3 to 8, ordered most to least
-central. Use slugs exactly as listed and invent nothing; an item that fits
-none gets an empty list. Tag what the work IS about, not what it mentions in
-passing. Return exactly one entry per item.`;
+and the tags that genuinely apply — typically 3 to 8. Tag membership is a
+matter of degree, not a yes/no: give each tag a strength in [0, 1] for how
+central it is to THIS work.
+
+- 0.9–1.0: the paper is squarely about this; you would file it here first.
+- 0.6–0.8: a major component of the work, but not what it is chiefly about.
+- 0.3–0.5: genuinely present — a setting it is evaluated in, a technique it
+  builds on — but peripheral.
+- Below 0.3: don't include it.
+
+Most items should have one or two tags above 0.8 and a tail of weaker ones.
+Use slugs exactly as listed and invent nothing; an item that fits none gets an
+empty list. Tag what the work IS about, not what it mentions in passing.
+Return exactly one entry per item.`;
 }
 
 async function tagOnce(
   vocab: readonly VocabTag[],
   items: readonly { index: number; title: string; abstract: string | null }[],
-): Promise<{ byIndex: Map<number, string[]>; usage: Usage }> {
+): Promise<{ byIndex: Map<number, WeightedTag[]>; usage: Usage }> {
   client ??= new Anthropic();
   const response = await client.messages
     .stream({
       model: "claude-opus-5",
-      max_tokens: 16000,
+      max_tokens: 32000,
       system: [{ type: "text", text: tagSystem(vocab), cache_control: { type: "ephemeral" } }],
       messages: [
         {
@@ -160,7 +180,23 @@ async function tagOnce(
   }
   const valid = new Set(vocab.map((t) => t.slug));
   const byIndex = new Map(
-    parsed.items.map((item) => [item.index, [...new Set(item.slugs)].filter((s) => valid.has(s))]),
+    parsed.items.map((item) => {
+      // Keep the strongest reading of a slug the model listed twice.
+      const bySlug = new Map<string, WeightedTag>();
+      for (const t of item.tags) {
+        if (!valid.has(t.slug)) {
+          continue;
+        }
+        const prev = bySlug.get(t.slug);
+        if (prev === undefined || t.strength > prev.strength) {
+          bySlug.set(t.slug, t);
+        }
+      }
+      return [
+        item.index,
+        [...bySlug.values()].sort((a, b) => b.strength - a.strength),
+      ] as const;
+    }),
   );
   return {
     byIndex,
@@ -180,12 +216,12 @@ export const anthropicTagFn: TagFn = async (vocab, items) => {
     const retry = await tagOnce(vocab, missing);
     tokensIn += retry.usage.tokensIn;
     tokensOut += retry.usage.tokensOut;
-    for (const [index, slugs] of retry.byIndex) {
-      byIndex.set(index, slugs);
+    for (const [index, tags] of retry.byIndex) {
+      byIndex.set(index, tags);
     }
   }
   return {
-    tagged: [...byIndex.entries()].map(([index, slugs]) => ({ index, slugs })),
+    tagged: [...byIndex.entries()].map(([index, tags]) => ({ index, tags })),
     usage: { tokensIn, tokensOut },
   };
 };
@@ -195,11 +231,6 @@ export const taggerJobPayload = z.object({ regenerate: z.boolean().optional() })
 const batchSize = 20;
 /** Batches in flight at once: the whole library is ~60 calls sequentially. */
 const concurrency = 4;
-
-/** Confidence decays with position: the model orders slugs most-central first. */
-function confidenceFor(rank: number, total: number): number {
-  return total <= 1 ? 1 : Number((1 - (0.5 * rank) / (total - 1)).toFixed(2));
-}
 
 /** Runs `worker` over the batches, at most `concurrency` at a time, in order. */
 async function forEachBatch<T>(
@@ -310,20 +341,17 @@ export function makeTaggerReactor(vocabFn: VocabFn, tagFn: TagFn): Reactor {
         const taggedAt = new Date().toISOString();
         for (const entry of result.tagged) {
           const item = batch[entry.index];
-          if (item === undefined || entry.slugs.length === 0) {
+          if (item === undefined || entry.tags.length === 0) {
             continue;
           }
           events.push({
             type: "agent.item.tagged",
-            schemaVersion: 1,
+            schemaVersion: 2,
             occurredAt: taggedAt,
             payload: {
               vocabId,
               target: { kind: item.kind, ref: item.ref },
-              tags: entry.slugs.map((slug, rank) => ({
-                slug,
-                confidence: confidenceFor(rank, entry.slugs.length),
-              })),
+              tags: entry.tags,
             },
             idempotencyKey: `tags:${vocabId}:${item.entityId}`,
           });

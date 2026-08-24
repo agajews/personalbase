@@ -1726,7 +1726,7 @@ main.wide {
 }
 
 .graph-view {
-  max-width: 1240px;
+  max-width: 1500px;
 }
 
 .graph-toolbar {
@@ -1776,18 +1776,47 @@ main.wide {
   display: inline-block;
 }
 
+/* Map on the left, the selected tag on the right, both in view at once. */
+.graph-layout {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.graph-stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
 .tag-canvas {
   display: block;
   width: 100%;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
+  /* The canvas owns wheel and drag gestures; the page must not also scroll. */
   touch-action: none;
+  overscroll-behavior: contain;
   cursor: grab;
 }
 
 .tag-canvas:active {
   cursor: grabbing;
+}
+
+.graph-tip {
+  position: absolute;
+  left: 12px;
+  bottom: 34px;
+  max-width: 70%;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  pointer-events: none;
 }
 
 .graph-hint {
@@ -1796,13 +1825,122 @@ main.wide {
   margin: 6px 0 0;
 }
 
-.tag-detail {
-  margin-top: 22px;
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
-  max-width: 780px;
+.graph-rail {
+  width: 330px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+  max-height: 660px;
+  overflow-y: auto;
 }
 
-.tag-detail .entity-head h1 {
-  font-size: 22px;
+.rail-empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  max-width: 40ch;
+}
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rail-clear {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.rail-title {
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 600;
+  margin: 2px 0 6px;
+}
+
+.graph-rail .feed-date {
+  margin: 16px 0 6px;
+}
+
+.rail-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.rail-item:hover {
+  background: var(--bench);
+}
+
+.rail-item-name {
+  font-family: var(--serif);
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rail-item-name:hover {
+  text-decoration: underline;
+}
+
+.rail-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Membership is continuous: the bar is how strongly the paper carries the tag. */
+.strength-bar {
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.rail-strength {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Marking is a per-paper aside; it appears when the row is under the cursor. */
+.rail-item .mark-buttons {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 90ms ease-out;
+}
+
+.rail-item:hover .mark-buttons,
+.rail-item:focus-within .mark-buttons {
+  opacity: 1;
+}
+
+.rail-item button.mark {
+  font-size: 10.5px;
+  padding: 2px 7px;
+}
+
+/* Narrow windows: the rail drops below the map rather than squeezing it. */
+@media (max-width: 1279px) {
+  .graph-layout {
+    flex-direction: column;
+  }
+
+  .graph-rail {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 14px;
+    max-height: none;
+  }
 }

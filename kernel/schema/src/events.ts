@@ -265,7 +265,34 @@ export const agentItemTaggedV1 = z.object({
     }),
   ),
 });
-export type AgentItemTagged = z.infer<typeof agentItemTaggedV1>;
+
+/**
+ * v2 makes membership continuous: `strength` is how central the tag is to the
+ * work, not how sure the model is that it applies at all. A paper is a strong
+ * match for one or two tags and a weak match for several more.
+ */
+export const agentItemTaggedV2 = z.object({
+  vocabId: z.string().min(1),
+  target: entityRefSchema(),
+  tags: z.array(
+    z.object({
+      slug: z.string().min(1),
+      strength: z.number().min(0).max(1),
+    }),
+  ),
+});
+export type AgentItemTagged = z.infer<typeof agentItemTaggedV2>;
+
+function upcastItemTaggedV1(previous: unknown): unknown {
+  const v1 = agentItemTaggedV1.parse(previous);
+  // v1 confidence was derived from the order the model listed slugs in, which
+  // is exactly the ranking `strength` now carries explicitly.
+  return {
+    vocabId: v1.vocabId,
+    target: v1.target,
+    tags: v1.tags.map((t) => ({ slug: t.slug, strength: t.confidence })),
+  };
+}
 
 // ---- operator chat: conversations are events like everything else ----
 
@@ -354,7 +381,13 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
   { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
   { type: "agent.tagvocab.proposed", versions: [{ schema: agentTagVocabProposedV1 }] },
-  { type: "agent.item.tagged", versions: [{ schema: agentItemTaggedV1 }] },
+  {
+    type: "agent.item.tagged",
+    versions: [
+      { schema: agentItemTaggedV1 },
+      { schema: agentItemTaggedV2, upcast: upcastItemTaggedV1 },
+    ],
+  },
   { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
   { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
   { type: "surface.day.resurfaced", versions: [{ schema: surfaceDayResurfacedV1 }] },

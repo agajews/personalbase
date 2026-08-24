@@ -63,9 +63,13 @@ const fakeTag: TagFn = async (_vocab, items) => {
   return {
     tagged: items.map((i) => ({
       index: i.index,
-      slugs: i.title.toLowerCase().includes("diffusion")
-        ? ["ddpm", "samplers", "not-in-vocab"]
-        : ["mamba"],
+      tags: i.title.toLowerCase().includes("diffusion")
+        ? [
+            { slug: "ddpm", strength: 0.95 },
+            { slug: "samplers", strength: 0.4 },
+            { slug: "not-in-vocab", strength: 0.9 },
+          ]
+        : [{ slug: "mamba", strength: 0.8 }],
     })),
     usage: { tokensIn: 5, tokensOut: 5 },
   };
@@ -94,17 +98,17 @@ describe("tagger reactor", () => {
 
     // A slug outside the vocabulary is dropped by the fold's join.
     const tagged = await sql`
-      select e.display_name, it.slug, it.confidence from item_tags it
+      select e.display_name, it.slug, it.strength from item_tags it
       join entities e on e.entity_id = it.entity_id
-      order by e.display_name, it.confidence desc`;
+      order by e.display_name, it.strength desc`;
     expect(tagged.map((t) => [t["display_name"], t["slug"]])).toEqual([
       ["Diffusion for images", "ddpm"],
       ["Diffusion for images", "samplers"],
       ["Mamba variants", "mamba"],
     ]);
-    // Confidence decays with the order the model listed the slugs in.
-    expect(Number(tagged[0]!["confidence"])).toBeCloseTo(1);
-    expect(Number(tagged[1]!["confidence"])).toBeCloseTo(0.75);
+    // Membership is continuous: the model's own strength is what lands.
+    expect(Number(tagged[0]!["strength"])).toBeCloseTo(0.95);
+    expect(Number(tagged[1]!["strength"])).toBeCloseTo(0.4);
   });
 
   test("rerun tags only newly saved items under the same vocabulary", async () => {
@@ -150,5 +154,28 @@ describe("tagger reactor", () => {
     expect(vocab.map((v) => v["slug"])).toEqual(["flows"]);
     const remaining = await sql`select count(*)::int as n from item_tags`;
     expect(remaining[0]!["n"]).toBe(0);
+  });
+
+  test("a v1 tagging is upcast: its rank-derived confidence becomes strength", async () => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "agent.item.tagged",
+        schemaVersion: 1,
+        source: "test",
+        occurredAt: "2026-08-21T01:00:00.000Z",
+        payload: {
+          vocabId: "v2",
+          target: { kind: "paper", ref: "arxiv:2608.00001" },
+          tags: [{ slug: "flows", confidence: 0.42 }],
+        },
+        idempotencyKey: "tags:v2:legacy",
+      },
+    ]);
+    await catchUpFolds(sql, coreRegistry, folds);
+
+    const rows = await sql`select slug, strength from item_tags`;
+    expect(rows.length).toBe(1);
+    expect(rows[0]!["slug"]).toBe("flows");
+    expect(Number(rows[0]!["strength"])).toBeCloseTo(0.42);
   });
 });

@@ -90,6 +90,7 @@ export {
   type TagFn,
   type VocabTag,
   type ItemTags,
+  type WeightedTag,
 } from "./tagger.js";
 export {
   taxonomyReactor,

@@ -182,8 +182,17 @@ export function facetHue(facet: string): number {
   return facetHues[facet] ?? 0;
 }
 
-/** Tag chips on an entity page; each links into the graph focused on that tag. */
-export function TagChips({ tags }: { tags: { slug: string; name: string; facet: string }[] }) {
+/**
+ * Tag chips on an entity page. Membership is a matter of degree, so the chip's
+ * colour saturates with strength: what the paper is squarely about reads
+ * strongest, what it merely touches fades toward the page. Each links into the
+ * graph focused on that tag.
+ */
+export function TagChips({
+  tags,
+}: {
+  tags: { slug: string; name: string; facet: string; strength: number }[];
+}) {
   if (tags.length === 0) {
     return null;
   }
@@ -191,16 +200,17 @@ export function TagChips({ tags }: { tags: { slug: string; name: string; facet: 
     <p className="tag-chips">
       {tags.map((t) => {
         const h = facetHue(t.facet);
+        const s = Math.max(0, Math.min(1, t.strength));
         return (
           <a
             key={t.slug}
             className="tag-chip"
             href={`#/graph/${encodeURIComponent(t.slug)}`}
-            title={t.facet}
+            title={`${t.facet} · strength ${t.strength.toFixed(2)}`}
             style={{
-              color: `hsl(${h} 42% 30%)`,
-              background: `hsl(${h} 48% 94%)`,
-              borderColor: `hsl(${h} 34% 80%)`,
+              color: `hsl(${h} ${18 + 26 * s}% ${44 - 14 * s}%)`,
+              background: `hsl(${h} ${20 + 32 * s}% ${98 - 5 * s}%)`,
+              borderColor: `hsl(${h} ${14 + 24 * s}% ${90 - 12 * s}%)`,
             }}
           >
             {t.name}

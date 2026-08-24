@@ -529,9 +529,9 @@ app.get("/api/entity/:id", async (c) => {
   });
   const markRow = await sql`select mark from paper_marks where entity_id = ${id}`;
   const tags = await sql`
-    select v.slug, v.name, v.facet, it.confidence
+    select v.slug, v.name, v.facet, it.strength
     from item_tags it join tag_vocab v on v.slug = it.slug
-    where it.entity_id = ${id} order by it.confidence desc, v.name`;
+    where it.entity_id = ${id} order by it.strength desc, v.name`;
   return c.json({
     entity: {
       entityId: entity["entity_id"],
@@ -543,7 +543,7 @@ app.get("/api/entity/:id", async (c) => {
       slug: t["slug"],
       name: t["name"],
       facet: t["facet"],
-      confidence: Number(t["confidence"]),
+      strength: Number(t["strength"]),
     })),
     identifiers,
     linksOut: linksOut.map(shapeLink),
@@ -954,20 +954,65 @@ app.get("/api/tags", async (c) => {
 app.get("/api/tags/graph", async (c) => {
   const minShared = Math.max(1, Number(c.req.query("minShared") ?? 3));
   const nodes = await sql`
-    select v.slug, v.name, v.facet, count(it.entity_id)::int as items
+    select v.slug, v.name, v.facet, count(it.entity_id)::int as items,
+           coalesce(sum(it.strength), 0)::real as weight
     from tag_vocab v left join item_tags it on it.slug = v.slug
     group by v.slug, v.name, v.facet, v.position
     having count(it.entity_id) > 0
     order by v.position`;
+  // Two tags are linked by the papers they share. `shared` counts them;
+  // `weight` sums how strongly those papers belong to both, so a link between
+  // two tags a paper is squarely about outweighs one it merely brushes.
   const edges = await sql`
-    select a.slug as source, b.slug as target, count(*)::int as weight
+    select a.slug as source, b.slug as target,
+           count(*)::int as shared,
+           sum(least(a.strength, b.strength))::real as weight
     from item_tags a
     join item_tags b on b.entity_id = a.entity_id and b.slug > a.slug
     group by a.slug, b.slug
     having count(*) >= ${minShared}
-    order by count(*) desc
+    order by sum(least(a.strength, b.strength)) desc
     limit 6000`;
-  return c.json({ minShared, nodes, edges });
+  return c.json({
+    minShared,
+    nodes: nodes.map((n) => ({
+      slug: n["slug"],
+      name: n["name"],
+      facet: n["facet"],
+      items: n["items"],
+      weight: Number(n["weight"]),
+    })),
+    edges: edges.map((e) => ({
+      source: e["source"],
+      target: e["target"],
+      shared: e["shared"],
+      weight: Number(e["weight"]),
+    })),
+  });
+});
+
+// Every tagged item with its tag memberships, for the zoomed-in layer of the
+// graph. Kept off /api/tags/graph so sweeping the edge threshold doesn't
+// re-send the whole library.
+app.get("/api/tags/papers", async (c) => {
+  const rows = await sql`
+    select e.entity_id, e.kind, coalesce(e.display_name, e.ref) as title,
+           array_agg(it.slug order by it.strength desc) as slugs,
+           array_agg(it.strength order by it.strength desc) as strengths
+    from item_tags it
+    join entities e on e.entity_id = it.entity_id
+    group by e.entity_id, e.kind, e.display_name, e.ref`;
+  return c.json({
+    papers: rows.map((r) => ({
+      entityId: r["entity_id"],
+      kind: r["kind"],
+      title: r["title"],
+      tags: (r["slugs"] as string[]).map((slug, i) => [
+        slug,
+        Number((r["strengths"] as number[])[i]),
+      ]),
+    })),
+  });
 });
 
 app.get("/api/tags/:slug", async (c) => {
@@ -979,13 +1024,13 @@ app.get("/api/tags/:slug", async (c) => {
     return c.json({ error: `no tag ${slug}` }, 404);
   }
   const items = await sql`
-    select it.confidence, e.entity_id, e.kind, e.display_name, p.arxiv_id, m.mark
+    select it.strength, e.entity_id, e.kind, e.display_name, p.arxiv_id, m.mark
     from item_tags it
     join entities e on e.entity_id = it.entity_id
     left join papers p on p.entity_id = e.entity_id
     left join paper_marks m on m.entity_id = e.entity_id
     where it.slug = ${slug}
-    order by it.confidence desc, e.display_name`;
+    order by it.strength desc, e.display_name`;
   // Tags that most often ride along with this one — the neighbourhood the
   // graph draws, listed for keyboard-and-link navigation.
   const related = await sql`
@@ -995,7 +1040,7 @@ app.get("/api/tags/:slug", async (c) => {
     join tag_vocab v on v.slug = b.slug
     where a.slug = ${slug}
     group by v.slug, v.name
-    order by count(*) desc, v.name
+    order by sum(least(a.strength, b.strength)) desc, v.name
     limit 12`;
   return c.json({
     slug: tag["slug"],
@@ -1009,7 +1054,7 @@ app.get("/api/tags/:slug", async (c) => {
       title: r["display_name"],
       arxivId: r["arxiv_id"],
       mark: r["mark"],
-      confidence: Number(r["confidence"]),
+      strength: Number(r["strength"]),
     })),
   });
 });

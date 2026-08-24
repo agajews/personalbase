@@ -1,4 +1,4 @@
-import { agentItemTaggedV1, agentTagVocabProposedV1 } from "@nc/schema";
+import { agentItemTaggedV2, agentTagVocabProposedV1 } from "@nc/schema";
 import type { Fold } from "@nc/process";
 import type { TransactionSql } from "@nc/log";
 import { entityId } from "./ids.js";
@@ -13,7 +13,7 @@ import { entityId } from "./ids.js";
 interface TagRow {
   entityId: string;
   slug: string;
-  confidence: number;
+  strength: number;
   vocabId: string;
   seq: bigint;
 }
@@ -27,18 +27,18 @@ async function flushTags(tx: TransactionSql, buffer: TagRow[]): Promise<void> {
   const byKey = new Map(buffer.map((r) => [`${r.entityId}|${r.slug}`, r]));
   const rows = [...byKey.values()];
   await tx`
-    insert into item_tags (entity_id, slug, confidence, vocab_id, tagged_seq)
-    select t.entity_id, t.slug, t.confidence, t.vocab_id, t.seq
+    insert into item_tags (entity_id, slug, strength, vocab_id, tagged_seq)
+    select t.entity_id, t.slug, t.strength, t.vocab_id, t.seq
     from unnest(
       ${rows.map((r) => r.entityId)}::uuid[],
       ${rows.map((r) => r.slug)}::text[],
-      ${rows.map((r) => r.confidence)}::real[],
+      ${rows.map((r) => r.strength)}::real[],
       ${rows.map((r) => r.vocabId)}::text[],
       ${rows.map((r) => r.seq.toString())}::bigint[]
-    ) as t(entity_id, slug, confidence, vocab_id, seq)
+    ) as t(entity_id, slug, strength, vocab_id, seq)
     join tag_vocab v on v.slug = t.slug
     on conflict (entity_id, slug) do update set
-      confidence = excluded.confidence,
+      strength = excluded.strength,
       vocab_id = excluded.vocab_id,
       tagged_seq = excluded.tagged_seq`;
   buffer.length = 0;
@@ -47,7 +47,7 @@ async function flushTags(tx: TransactionSql, buffer: TagRow[]): Promise<void> {
 export const tagsFold: Fold = {
   kind: "fold",
   name: "tags",
-  version: 1,
+  version: 2, // continuous tag strength
   consumes: ["agent.tagvocab.proposed", "agent.item.tagged"],
   tables: ["tag_vocab", "item_tags"],
   async init(tx) {
@@ -65,7 +65,7 @@ export const tagsFold: Fold = {
       create table item_tags (
         entity_id  uuid not null,
         slug       text not null,
-        confidence real not null,
+        strength   real not null,   -- how central the tag is, in [0, 1]
         vocab_id   text not null,
         tagged_seq bigint not null,
         primary key (entity_id, slug)
@@ -97,7 +97,8 @@ export const tagsFold: Fold = {
         continue;
       }
       if (event.type === "agent.item.tagged") {
-        const t = agentItemTaggedV1.parse(event.payload);
+        // Payloads arrive upcast to v2 (v1 carried a rank-derived confidence).
+        const t = agentItemTaggedV2.parse(event.payload);
         if (t.vocabId !== vocabId) {
           continue;
         }
@@ -106,7 +107,7 @@ export const tagsFold: Fold = {
           buffer.push({
             entityId: id,
             slug: tag.slug,
-            confidence: tag.confidence,
+            strength: tag.strength,
             vocabId: t.vocabId,
             seq: event.seq,
           });

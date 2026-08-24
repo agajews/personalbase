@@ -153,7 +153,8 @@ export interface ItemTag {
   slug: string;
   name: string;
   facet: string;
-  confidence: number;
+  /** How central the tag is to the item, in [0, 1]. */
+  strength: number;
 }
 
 export interface EntityPage {
@@ -262,8 +263,17 @@ export interface TagSummary {
 
 export interface TagGraph {
   minShared: number;
-  nodes: { slug: string; name: string; facet: string; items: number }[];
-  edges: { source: string; target: string; weight: number }[];
+  nodes: { slug: string; name: string; facet: string; items: number; weight: number }[];
+  /** `shared` counts the papers; `weight` sums how strongly they belong to both. */
+  edges: { source: string; target: string; shared: number; weight: number }[];
+}
+
+export interface TagPaper {
+  entityId: string;
+  kind: string;
+  title: string;
+  /** [slug, strength] pairs, strongest first. */
+  tags: [string, number][];
 }
 
 export interface TagPage {
@@ -278,7 +288,7 @@ export interface TagPage {
     title: string | null;
     arxivId: string | null;
     mark: Mark | null;
-    confidence: number;
+    strength: number;
   }[];
 }
 
@@ -411,6 +421,7 @@ export const api = {
     request("/api/tags"),
   tagGraph: (minShared: number): Promise<TagGraph> =>
     request(`/api/tags/graph?minShared=${minShared}`),
+  tagPapers: (): Promise<{ papers: TagPaper[] }> => request("/api/tags/papers"),
   tag: (slug: string): Promise<TagPage> => request(`/api/tags/${encodeURIComponent(slug)}`),
   runTagger: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/tag", { regenerate }) as Promise<{ jobId: string }>,
