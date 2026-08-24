@@ -2,9 +2,17 @@
    Quiet instrument panel: bench-green neutrals, ink text; the only vivid
    color is derived from each filter's prompt hash, so prompt versions are
    visible as color. Newsreader for paper text, Instrument Sans for controls,
-   IBM Plex Mono for hashes/ids/log. */
+   IBM Plex Mono for hashes/ids/log.
 
-:root {
+   Every color in this file is a token, so the same bench reads at two light
+   levels: lamp on ([data-theme="light"], the default) and lamp off
+   ([data-theme="dark"]). The dark set is the same instrument in a dark room —
+   the greens stay green, the accent inverts from deep spruce to pale sage so
+   it still carries on a dark ground. theme.ts decides which is on. */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
   --bench: #edefea;
   --card: #fbfcf9;
   --ink: #1b2420;
@@ -12,10 +20,54 @@
   --line: #d9ddd3;
   --spruce: #24413b;
   --spruce-deep: #1a312c;
+  --on-spruce: #f2f6f2;
   --link: #2a5db0;
+  /* the transcript console — dark in both themes */
+  --console: #1a312c;
+  --error-bg: #f7ecea;
+  --error-line: #c9a09a;
+  --error-ink: #7c2d22;
+  --danger: #a33d2e;
+  --amber: #7a5a17;
+  --amber-line: #c9a44a;
+  --ok: #2c6242;
+  --shadow: rgba(27, 36, 32, 0.07);
+  /* hash-derived chips: hue comes from the prompt, lightness from the theme */
+  --chip-ink: 45% 30%;
+  --chip-bg: 50% 93%;
+  --chip-line: 35% 78%;
+  --chip-fill: 45% 42%;
   --sans: "Instrument Sans", system-ui, sans-serif;
   --serif: "Newsreader", georgia, serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bench: #121816;
+  --card: #1a2220;
+  --ink: #e3e8e2;
+  --muted: #939e97;
+  --line: #2c3733;
+  --spruce: #8fc4a8;
+  --spruce-deep: #a9d6bd;
+  --on-spruce: #10201b;
+  --link: #86b3f0;
+  /* a step below the bench, so the console still reads as a recessed screen
+     rather than another panel */
+  --console: #080c0b;
+  --error-bg: #2a1a17;
+  --error-line: #6d3b31;
+  --error-ink: #edb2a6;
+  --danger: #e08a76;
+  --amber: #d9b565;
+  --amber-line: #7d6630;
+  --ok: #74c496;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --chip-ink: 55% 72%;
+  --chip-bg: 30% 17%;
+  --chip-line: 25% 30%;
+  --chip-fill: 50% 58%;
 }
 
 * {
@@ -60,12 +112,34 @@ header {
   font-family: var(--mono);
 }
 
+.header-right {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
 .header-facts {
   color: var(--muted);
   font-size: 12.5px;
   display: flex;
   gap: 7px;
   align-items: baseline;
+}
+
+/* ---- lamp switch ---- */
+
+.theme-toggle {
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--muted);
+  align-self: center;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--muted);
 }
 
 .dot {
@@ -249,7 +323,7 @@ button {
 button.primary {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: #f2f6f2;
+  color: var(--on-spruce);
   font-weight: 500;
 }
 
@@ -271,6 +345,9 @@ button:disabled {
   border: 1px solid;
   border-radius: 999px;
   white-space: nowrap;
+  color: hsl(var(--h) var(--chip-ink));
+  background: hsl(var(--h) var(--chip-bg));
+  border-color: hsl(var(--h) var(--chip-line));
 }
 
 .hash-chip-label {
@@ -472,6 +549,7 @@ textarea {
 .confidence-fill {
   display: block;
   height: 100%;
+  background: hsl(var(--h) var(--chip-fill));
 }
 
 .verdict-title {
@@ -540,7 +618,7 @@ a.org-chip {
   padding: 1.5px 8px;
   border-radius: 999px;
   background: var(--spruce);
-  color: #eef4ee;
+  color: var(--on-spruce);
   white-space: nowrap;
   align-self: center;
 }
@@ -602,9 +680,9 @@ a.org-chip {
 .error {
   margin-top: 14px;
   padding: 9px 12px;
-  border: 1px solid #c9a09a;
-  background: #f7ecea;
-  color: #7c2d22;
+  border: 1px solid var(--error-line);
+  background: var(--error-bg);
+  color: var(--error-ink);
   border-radius: 7px;
   font-size: 13px;
 }
@@ -674,7 +752,7 @@ button.mark {
 button.mark.on {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: #eef4ee;
+  color: var(--on-spruce);
 }
 
 .mark-dot {
@@ -842,7 +920,7 @@ button.mark.on {
 }
 
 .chat-composer.large textarea {
-  box-shadow: 0 2px 14px rgba(27, 36, 32, 0.07);
+  box-shadow: 0 2px 14px var(--shadow);
 }
 
 /* markdown inside assistant bubbles */
@@ -918,7 +996,7 @@ button.mark.on {
 
 .chat-turn.user .chat-bubble {
   background: var(--spruce);
-  color: #eef4ee;
+  color: var(--on-spruce);
   border-radius: 12px 12px 3px 12px;
   padding: 9px 13px;
   white-space: pre-wrap;
@@ -942,7 +1020,7 @@ button.mark.on {
 }
 
 .chat-trace-line.err {
-  color: #a04a3c;
+  color: var(--danger);
 }
 
 .chat-working {
@@ -1201,7 +1279,7 @@ footer {
 }
 
 .dev-task-error {
-  color: #a33d2e;
+  color: var(--danger);
 }
 
 .dev-status {
@@ -1221,18 +1299,18 @@ footer {
 }
 
 .dev-status-pr_open {
-  color: #7a5a17;
-  border-color: #c9a44a;
+  color: var(--amber);
+  border-color: var(--amber-line);
 }
 
 .dev-status-merged {
-  color: #2c6242;
-  border-color: #2c6242;
+  color: var(--ok);
+  border-color: var(--ok);
 }
 
 .dev-status-failed {
-  color: #a33d2e;
-  border-color: #a33d2e;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .task-header {
@@ -1293,7 +1371,7 @@ footer {
 }
 
 .transcript {
-  background: var(--spruce-deep);
+  background: var(--console);
   color: #d7ded6;
   border-radius: 8px;
   padding: 14px;
@@ -1371,7 +1449,7 @@ footer {
 
 .preview-link:hover {
   background: var(--spruce);
-  color: #f2f6f2;
+  color: var(--on-spruce);
 }
 
 /* ---- small screens ---- */

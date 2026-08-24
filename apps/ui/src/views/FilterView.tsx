@@ -15,6 +15,7 @@ import {
   EntityChip,
   HashChip,
   hashHue,
+  hueStyle,
   MarkButtons,
 } from "../ui.js";
 
@@ -40,7 +41,7 @@ function VerdictRow({
         <span className="confidence" title={`confidence ${verdict.confidence.toFixed(2)}`}>
           <span
             className="confidence-fill"
-            style={{ width: `${verdict.confidence * 100}%`, background: `hsl(${hue} 45% 42%)` }}
+            style={{ width: `${verdict.confidence * 100}%`, ...hueStyle(hue) }}
           />
         </span>
         <a
