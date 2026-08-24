@@ -36,6 +36,7 @@ const usage = `usage: pnpm nc <command>
   import-paperpile <path>                     import a Paperpile library JSON export
   backfill-library                            fetch arXiv metadata for library papers
   classify [--regenerate]                     LLM-classify saved items into topic groups
+  tag [--regenerate]                          LLM-tag saved items with granular topic tags
   redrive <reactor> <seq>                     re-run an event reactor on one event
                                               (e.g. a skipped poison event, after a fix)
   run-filter [name] [--days N | --from <iso> --to <iso>]
@@ -217,6 +218,28 @@ async function cmdBackfillLibrary(): Promise<void> {
       `backfill: ${result.emitted} papers fetched, ${result.appended} new events; ` +
         `papers table now has ${rows[0]!["n"]} rows`,
     );
+  });
+}
+
+async function cmdTag(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { regenerate: { type: "boolean" } } });
+  await withDb(async (sql) => {
+    await catchUpFolds(sql, coreRegistry, folds);
+    const result = await runReactor(
+      sql,
+      coreRegistry,
+      reactors.find((r) => r.name === "tagger")!,
+      { kind: "job", payload: values.regenerate === true ? { regenerate: true } : {} },
+    );
+    await catchUpFolds(sql, coreRegistry, folds);
+    const top = await sql`
+      select v.name, count(it.entity_id)::int as n
+      from tag_vocab v left join item_tags it on it.slug = v.slug
+      group by v.name order by n desc limit 20`;
+    console.log(`tagged: ${result.emitted} events, ${result.appended} new`);
+    for (const t of top) {
+      console.log(`  ${t["n"]}\t${t["name"]}`);
+    }
   });
 }
 
@@ -469,6 +492,9 @@ switch (command) {
     break;
   case "backfill-library":
     await cmdBackfillLibrary();
+    break;
+  case "tag":
+    await cmdTag(rest);
     break;
   case "classify":
     await cmdClassify(rest);

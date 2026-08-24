@@ -10,6 +10,7 @@ import {
   libraryFold,
   marksFold,
   papersFold,
+  tagsFold,
   taxonomyFold,
 } from "@nc/folds";
 import {
@@ -24,6 +25,7 @@ import {
   libraryArxivBackfillReactor,
   paperFilterReactor,
   paperpileImportReactor,
+  taggerReactor,
   taxonomyReactor,
 } from "@nc/reactors";
 
@@ -37,6 +39,7 @@ export const folds: readonly Fold[] = [
   marksFold,
   devFold,
   taxonomyFold,
+  tagsFold,
   chatsFold,
   resurfacedFold,
   questionsFold,
@@ -51,6 +54,7 @@ export const reactors: readonly Reactor[] = [
   devAgentReactor,
   devMergeReactor,
   taxonomyReactor,
+  taggerReactor,
   resurfacerReactor,
   questionWriterReactor,
   mainUiReactor,

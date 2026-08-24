@@ -162,6 +162,67 @@ export function hashHue(hash: string): number {
   return parseInt(hash.slice(0, 6), 16) % 360;
 }
 
+/**
+ * One hue per tag facet, in the same muted-HSL idiom as the prompt-hash chips:
+ * facet is the only categorical dimension in the tag graph, so colour carries
+ * it everywhere tags appear — chips on a paper, nodes in the graph.
+ */
+const facetHues: Record<string, number> = {
+  task: 210,
+  method: 265,
+  architecture: 22,
+  theory: 292,
+  training: 150,
+  evaluation: 45,
+  systems: 188,
+  application: 358,
+};
+
+export function facetHue(facet: string): number {
+  return facetHues[facet] ?? 0;
+}
+
+/**
+ * Tag chips on an entity page. Membership is a matter of degree, so the chip's
+ * colour saturates with strength: what the paper is squarely about reads
+ * strongest, what it merely touches fades toward the page.
+ */
+export function TagChips({
+  tags,
+  hrefFor = (slug) => `#/tag/${encodeURIComponent(slug)}`,
+}: {
+  tags: { slug: string; name: string; facet: string; strength: number }[];
+  /** Where a chip leads; the graph's rail keeps you in the map instead. */
+  hrefFor?: (slug: string) => string;
+}) {
+  if (tags.length === 0) {
+    return null;
+  }
+  return (
+    <p className="tag-chips">
+      {tags.map((t) => {
+        const h = facetHue(t.facet);
+        const s = Math.max(0, Math.min(1, t.strength));
+        return (
+          <a
+            key={t.slug}
+            className="tag-chip"
+            href={hrefFor(t.slug)}
+            title={`${t.facet} · strength ${t.strength.toFixed(2)}`}
+            style={{
+              color: `hsl(${h} ${18 + 26 * s}% ${44 - 14 * s}%)`,
+              background: `hsl(${h} ${20 + 32 * s}% ${98 - 5 * s}%)`,
+              borderColor: `hsl(${h} ${14 + 24 * s}% ${90 - 12 * s}%)`,
+            }}
+          >
+            {t.name}
+          </a>
+        );
+      })}
+    </p>
+  );
+}
+
 export function navTo(path: string): void {
   location.hash = path;
 }

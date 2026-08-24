@@ -28,6 +28,7 @@ import {
   personRef,
   questionsFold,
   resurfacedFold,
+  tagsFold,
   taxonomyFold,
 } from "@nc/folds";
 
@@ -43,6 +44,7 @@ const folds = [
   libraryFold,
   marksFold,
   taxonomyFold,
+  tagsFold,
   devFold,
   chatsFold,
   resurfacedFold,
@@ -526,6 +528,50 @@ app.get("/api/entity/:id", async (c) => {
     other: { entityId: l["entity_id"], kind: l["kind"], displayName: l["display_name"] },
   });
   const markRow = await sql`select mark from paper_marks where entity_id = ${id}`;
+  const tags = await sql`
+    select v.slug, v.name, v.facet, it.strength
+    from item_tags it join tag_vocab v on v.slug = it.slug
+    where it.entity_id = ${id} order by it.strength desc, v.name`;
+  // What the papers around this entity are about. On an org this reads as the
+  // lab's subject matter; on a person, theirs. Direction doesn't matter — an
+  // affiliation points at papers, an author is pointed at by them.
+  const neighbourTags = await sql`
+    with linked as (
+      select from_id as other from links where to_id = ${id}
+      union
+      select to_id as other from links where from_id = ${id}
+    )
+    select v.slug, v.name, v.facet, it.strength,
+           e.entity_id, e.display_name, m.mark
+    from linked
+    join item_tags it on it.entity_id = linked.other
+    join tag_vocab v on v.slug = it.slug
+    join entities e on e.entity_id = linked.other
+    left join paper_marks m on m.entity_id = e.entity_id
+    order by it.strength desc, e.display_name`;
+  const tagGroups = new Map<
+    string,
+    {
+      slug: string;
+      name: string;
+      facet: string;
+      papers: { entityId: string; title: string | null; strength: number; mark: string | null }[];
+    }
+  >();
+  for (const row of neighbourTags) {
+    const slug = row["slug"] as string;
+    let group = tagGroups.get(slug);
+    if (group === undefined) {
+      group = { slug, name: row["name"], facet: row["facet"], papers: [] };
+      tagGroups.set(slug, group);
+    }
+    group.papers.push({
+      entityId: row["entity_id"],
+      title: row["display_name"],
+      strength: Number(row["strength"]),
+      mark: row["mark"],
+    });
+  }
   return c.json({
     entity: {
       entityId: entity["entity_id"],
@@ -533,6 +579,13 @@ app.get("/api/entity/:id", async (c) => {
       displayName: entity["display_name"],
     },
     mark: markRow[0]?.["mark"] ?? null,
+    tags: tags.map((t) => ({
+      slug: t["slug"],
+      name: t["name"],
+      facet: t["facet"],
+      strength: Number(t["strength"]),
+    })),
+    tagGroups: [...tagGroups.values()].sort((a, b) => b.papers.length - a.papers.length),
     identifiers,
     linksOut: linksOut.map(shapeLink),
     linksIn: linksIn.map(shapeLink),
@@ -915,6 +968,284 @@ app.get("/api/topics/:slug", async (c) => {
   });
 });
 
+// ---- the entity graph: anything that co-occurs across the saved library ----
+//
+// Tags, authors and affiliations are all the same shape — a membership
+// relation between a saved paper and something it belongs to, with a strength.
+// One set of endpoints serves all three; only the membership differs.
+
+// The tagger's own status: the vocabulary it invented and how much of the
+// library it has reached. Tag-specific, so it sits outside the graph modes.
+app.get("/api/tags", async (c) => {
+  const tags = await sql`
+    select v.slug, v.name, v.description, v.facet, v.vocab_id,
+           count(it.entity_id)::int as items
+    from tag_vocab v left join item_tags it on it.slug = v.slug
+    group by v.slug, v.name, v.description, v.facet, v.vocab_id, v.position
+    order by v.position`;
+  const tagged = await sql`select count(distinct entity_id)::int as n from item_tags`;
+  return c.json({
+    vocabId: tags[0]?.["vocab_id"] ?? null,
+    tagged: tagged[0]!["n"],
+    tags: tags.map((t) => ({
+      slug: t["slug"],
+      name: t["name"],
+      description: t["description"],
+      facet: t["facet"],
+      items: t["items"],
+    })),
+  });
+});
+
+const graphModes = {
+  tags: {
+    label: "tags",
+    /** Tag membership is graded by the tagger. */
+    memberships: `
+      select it.entity_id as paper, it.slug as key, v.name as name,
+             v.facet as facet, it.strength as strength
+      from item_tags it
+      join tag_vocab v on v.slug = it.slug
+      join paper_marks pm on pm.entity_id = it.entity_id`,
+    defaultMinItems: 1,
+  },
+  authors: {
+    label: "authors",
+    /** Authorship is binary; the graph's weight comes from how much they share. */
+    memberships: `
+      select l.to_id as paper, l.from_id::text as key,
+             coalesce(e.display_name, e.ref) as name, null::text as facet,
+             1::real as strength
+      from links l
+      join entities e on e.entity_id = l.from_id
+      join paper_marks pm on pm.entity_id = l.to_id
+      where l.link_type = 'authored'`,
+    defaultMinItems: 4,
+  },
+  orgs: {
+    label: "affiliations",
+    /** Affiliations are model-extracted, so the link's confidence is the strength. */
+    memberships: `
+      select l.from_id as paper, l.to_id::text as key,
+             coalesce(e.display_name, e.ref) as name, null::text as facet,
+             l.confidence as strength
+      from links l
+      join entities e on e.entity_id = l.to_id
+      join paper_marks pm on pm.entity_id = l.from_id
+      where l.link_type = 'affiliated_org'`,
+    defaultMinItems: 2,
+  },
+} as const;
+
+type GraphMode = keyof typeof graphModes;
+
+function graphMode(raw: string | undefined): GraphMode | null {
+  return raw !== undefined && raw in graphModes ? (raw as GraphMode) : null;
+}
+
+/** Nodes are capped so a mode with thousands of members stays laid-out-able. */
+const maxGraphNodes = 600;
+
+/**
+ * Deduped memberships, then the members that clear `minItems`. Everything the
+ * graph endpoints do is built on these two CTEs.
+ */
+function membershipCte(mode: GraphMode): string {
+  return `
+    with m as (${graphModes[mode].memberships}),
+    mm as (
+      select paper, key, min(name) as name, min(facet) as facet, max(strength) as strength
+      from m group by paper, key
+    ),
+    kept as (
+      select key, count(*)::int as items from mm
+      group by key having count(*) >= $1
+      order by count(*) desc limit ${maxGraphNodes}
+    )`;
+}
+
+/**
+ * A colour for members that don't carry a facet of their own: the tag facet
+ * their papers weigh most toward. An author who mostly writes about methods
+ * reads the same colour as the method tags do.
+ */
+async function derivedFacets(mode: GraphMode, minItems: number): Promise<Map<string, string>> {
+  const rows = await sql.unsafe(
+    `${membershipCte(mode)}
+     select mm.key, v.facet, sum(it.strength) as mass
+     from mm
+     join kept k on k.key = mm.key
+     join item_tags it on it.entity_id = mm.paper
+     join tag_vocab v on v.slug = it.slug
+     group by mm.key, v.facet`,
+    [minItems],
+  );
+  const best = new Map<string, { facet: string; mass: number }>();
+  for (const row of rows) {
+    const key = row["key"] as string;
+    const mass = Number(row["mass"]);
+    const prev = best.get(key);
+    if (prev === undefined || mass > prev.mass) {
+      best.set(key, { facet: row["facet"] as string, mass });
+    }
+  }
+  return new Map([...best].map(([key, v]) => [key, v.facet]));
+}
+
+app.get("/api/graph/:mode", async (c) => {
+  const mode = graphMode(c.req.param("mode"));
+  if (mode === null) {
+    return c.json({ error: `no graph mode ${c.req.param("mode")}` }, 404);
+  }
+  const minShared = Math.max(1, Number(c.req.query("minShared") ?? 3));
+  const minItems = Math.max(1, Number(c.req.query("minItems") ?? graphModes[mode].defaultMinItems));
+  const cte = membershipCte(mode);
+  const nodes = await sql.unsafe(
+    `${cte}
+     select mm.key, min(mm.name) as name, min(mm.facet) as facet,
+            k.items, sum(mm.strength)::real as weight
+     from mm join kept k on k.key = mm.key
+     group by mm.key, k.items
+     order by k.items desc`,
+    [minItems],
+  );
+  // Two members are linked by the papers they share; the weight sums how
+  // strongly each shared paper belongs to both.
+  const edges = await sql.unsafe(
+    `${cte}
+     select a.key as source, b.key as target,
+            count(*)::int as shared,
+            sum(least(a.strength, b.strength))::real as weight
+     from mm a
+     join mm b on b.paper = a.paper and b.key > a.key
+     join kept ka on ka.key = a.key
+     join kept kb on kb.key = b.key
+     group by a.key, b.key
+     having count(*) >= $2
+     order by sum(least(a.strength, b.strength)) desc
+     limit 6000`,
+    [minItems, minShared],
+  );
+  const facets = nodes.some((n) => n["facet"] === null)
+    ? await derivedFacets(mode, minItems)
+    : new Map<string, string>();
+  return c.json({
+    mode,
+    minShared,
+    minItems,
+    nodes: nodes.map((n) => ({
+      key: n["key"],
+      name: n["name"],
+      facet: n["facet"] ?? facets.get(n["key"] as string) ?? "other",
+      items: n["items"],
+      weight: Number(n["weight"]),
+    })),
+    edges: edges.map((e) => ({
+      source: e["source"],
+      target: e["target"],
+      shared: e["shared"],
+      weight: Number(e["weight"]),
+    })),
+  });
+});
+
+// Every paper with its memberships, for the zoomed-in layer of the graph.
+// Kept off the nodes endpoint so sweeping a threshold doesn't re-send it.
+app.get("/api/graph/:mode/papers", async (c) => {
+  const mode = graphMode(c.req.param("mode"));
+  if (mode === null) {
+    return c.json({ error: `no graph mode ${c.req.param("mode")}` }, 404);
+  }
+  const minItems = Math.max(1, Number(c.req.query("minItems") ?? graphModes[mode].defaultMinItems));
+  const rows = await sql.unsafe(
+    `${membershipCte(mode)}
+     select mm.paper, e.kind, coalesce(e.display_name, e.ref) as title,
+            array_agg(mm.key order by mm.strength desc) as keys,
+            array_agg(mm.strength order by mm.strength desc) as strengths
+     from mm
+     join kept k on k.key = mm.key
+     join entities e on e.entity_id = mm.paper
+     group by mm.paper, e.kind, e.display_name, e.ref`,
+    [minItems],
+  );
+  return c.json({
+    papers: rows.map((r) => ({
+      entityId: r["paper"],
+      kind: r["kind"],
+      title: r["title"],
+      tags: (r["keys"] as string[]).map((key, i) => [
+        key,
+        Number((r["strengths"] as number[])[i]),
+      ]),
+    })),
+  });
+});
+
+// One member: its papers and the members it most often travels with. Drives
+// both the graph's rail and a tag's own page.
+app.get("/api/graph/:mode/node/:key", async (c) => {
+  const mode = graphMode(c.req.param("mode"));
+  if (mode === null) {
+    return c.json({ error: `no graph mode ${c.req.param("mode")}` }, 404);
+  }
+  const key = c.req.param("key");
+  const cte = membershipCte(mode);
+  const papers = await sql.unsafe(
+    `${cte}
+     select mm.strength, e.entity_id, e.kind, e.display_name, p.arxiv_id, mk.mark
+     from mm
+     join entities e on e.entity_id = mm.paper
+     left join papers p on p.entity_id = e.entity_id
+     left join paper_marks mk on mk.entity_id = e.entity_id
+     where mm.key = $2
+     order by mm.strength desc, e.display_name`,
+    [1, key],
+  );
+  if (papers.length === 0) {
+    return c.json({ error: `nothing in ${mode} named ${key}` }, 404);
+  }
+  const related = await sql.unsafe(
+    `${cte}
+     select b.key, min(b.name) as name, count(*)::int as shared
+     from mm a join mm b on b.paper = a.paper and b.key <> a.key
+     where a.key = $2
+     group by b.key
+     order by sum(least(a.strength, b.strength)) desc, min(b.name)
+     limit 12`,
+    [1, key],
+  );
+  const meta = (
+    await sql.unsafe(`${cte} select min(name) as name, min(facet) as facet from mm where key = $2`, [
+      1,
+      key,
+    ])
+  )[0];
+  const description =
+    mode === "tags"
+      ? ((await sql`select description from tag_vocab where slug = ${key}`)[0]?.["description"] ??
+        "")
+      : "";
+  const facets = meta?.["facet"] === null ? await derivedFacets(mode, 1) : new Map<string, string>();
+  return c.json({
+    mode,
+    key,
+    name: meta?.["name"] ?? key,
+    facet: meta?.["facet"] ?? facets.get(key) ?? "other",
+    description,
+    /** Real entities have their own page; tags have the tag page. */
+    entityId: mode === "tags" ? null : key,
+    related,
+    papers: papers.map((r) => ({
+      entityId: r["entity_id"],
+      kind: r["kind"],
+      title: r["display_name"],
+      arxivId: r["arxiv_id"],
+      mark: r["mark"],
+      strength: Number(r["strength"]),
+    })),
+  });
+});
+
 app.get("/api/dev/runs/:uid/transcript", async (c) => {
   const uid = c.req.param("uid");
   const after = Number(c.req.query("after") ?? -1);
@@ -1025,6 +1356,18 @@ app.post("/api/jobs/classify", async (c) => {
   const jobId = await enqueueJob(
     sql,
     "reactor:taxonomy",
+    body.regenerate === true ? { regenerate: true } : {},
+  );
+  return c.json({ jobId });
+});
+
+const tagJobBody = z.object({ regenerate: z.boolean().optional() });
+
+app.post("/api/jobs/tag", async (c) => {
+  const body = tagJobBody.parse(await c.req.json());
+  const jobId = await enqueueJob(
+    sql,
+    "reactor:tagger",
     body.regenerate === true ? { regenerate: true } : {},
   );
   return c.json({ jobId });
