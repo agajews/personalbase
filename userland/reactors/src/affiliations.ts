@@ -76,7 +76,9 @@ export const anthropicExtractor: AffiliationExtractor = async (input) => {
   client ??= new Anthropic();
   const response = await client.messages.parse({
     model: "claude-haiku-4-5",
-    max_tokens: 4096,
+    // Papers with long author blocks overflow small caps mid-JSON
+    // ("Unterminated string"); give the output real headroom.
+    max_tokens: 16000,
     system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
     messages: [
       { role: "user", content: `Title: ${input.title}\n\nFirst-page text:\n${input.text}` },
