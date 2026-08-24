@@ -171,6 +171,18 @@ export function ago(iso: string | null): string {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+/**
+ * How long a run has been going, or how long it took once it finished — the
+ * same shape as ago(), without the "ago".
+ */
+export function runDuration(startedAt: string, finishedAt: string | null): string {
+  const end = finishedAt === null ? Date.now() : new Date(finishedAt).getTime();
+  const seconds = Math.max(0, (end - new Date(startedAt).getTime()) / 1000);
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
 export function formatDay(day: string): string {
   const today = new Date().toISOString().slice(0, 10);
   if (day === today) {

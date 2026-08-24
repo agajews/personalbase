@@ -713,7 +713,7 @@ app.get("/api/dev/tasks", async (c) => {
   const tasks = await sql`
     select t.task_uid, t.title, t.status, t.created_at,
            r.run_uid, r.kind, r.status as run_status, r.pr_number, r.pr_url,
-           r.summary, r.error
+           r.summary, r.error, r.started_at, r.finished_at
     from dev_tasks t
     left join lateral (
       select * from dev_runs where task_uid = t.task_uid
@@ -738,6 +738,8 @@ app.get("/api/dev/tasks", async (c) => {
               prUrl: t["pr_url"],
               summary: t["summary"],
               error: t["error"],
+              startedAt: t["started_at"],
+              finishedAt: t["finished_at"],
             },
     })),
   });
