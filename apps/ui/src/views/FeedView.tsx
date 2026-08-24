@@ -16,6 +16,7 @@ import {
   hashHue,
   MarkButtons,
   MathMarkdown,
+  navTo,
 } from "../ui.js";
 
 function FeedRow({
@@ -145,17 +146,26 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
   );
 }
 
-/** The day's spaced-repetition exercise; solving happens in its chat. */
+/** The day's spaced-repetition exercise; clicking anywhere opens the problem
+ * view (the question pinned over its tutor chat). */
 function QuestionCard({ q }: { q: StudyQuestion }) {
   return (
-    <div className="question-card">
+    <div
+      className="question-card"
+      onClick={() => navTo(`/chat/${q.questionUid}`)}
+      role="link"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") navTo(`/chat/${q.questionUid}`);
+      }}
+    >
       <div className="question-body">
         <MathMarkdown>{q.question}</MathMarkdown>
       </div>
       <div className="question-actions">
-        <a className="primary question-solve" href={`#/chat/${q.questionUid}`}>
+        <span className="primary question-solve">
           {q.turns > 0 ? "Continue discussion" : "Write your solution"}
-        </a>
+        </span>
         <span className="question-notes">{q.notes}</span>
       </div>
     </div>
