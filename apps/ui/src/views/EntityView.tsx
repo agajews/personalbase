@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, type EntityLink } from "../api.js";
 import { useCached } from "../cache.js";
-import { ago, MarkButtons } from "../ui.js";
+import { Abstract, ago, EntityChip, MarkButtons } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -81,19 +81,42 @@ export function EntityView({ id }: { id: string }) {
       return true;
     });
   };
+  // A paper's affiliations are context you want before the abstract, not a
+  // link group at the foot of the page — they ride up top as one serif row.
+  const linksOut = dedupedLinks(page.linksOut);
+  const affiliations = linksOut.filter((l) => l.linkType === "affiliated_org");
+  const otherLinksOut = linksOut.filter((l) => l.linkType !== "affiliated_org");
+  // The paper card headlines the arXiv id already — don't print it twice.
+  const identifiers = page.identifiers.filter(
+    (i) => paper === null || i.scheme !== "arxiv_id",
+  );
 
   return (
     <div className="entity-page">
       <div className="entity-head">
-        <span className="entity-kind">{entity.kind}</span>
+        {/* A paper announces itself — the kind label only earns its place on
+            entities whose type isn't obvious from the page below. */}
+        {entity.kind !== "paper" && <span className="entity-kind">{entity.kind}</span>}
         <h1>{entity.displayName ?? entity.entityId}</h1>
         {(entity.kind === "paper" || entity.kind === "resource") && (
           <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
         )}
       </div>
-      {page.identifiers.length > 0 && (
+      {affiliations.length > 0 && (
+        <p className="entity-affiliations">
+          {affiliations.map((l) => (
+            <EntityChip
+              key={l.other.entityId}
+              entityId={l.other.entityId}
+              name={l.other.displayName ?? l.other.entityId}
+              className="affiliation-link"
+            />
+          ))}
+        </p>
+      )}
+      {identifiers.length > 0 && (
         <p className="entity-idents">
-          {page.identifiers.map((i) => (
+          {identifiers.map((i) => (
             <span key={`${i.scheme}:${i.value}`} className="ident">
               {i.scheme}: {i.value}
             </span>
@@ -114,7 +137,7 @@ export function EntityView({ id }: { id: string }) {
           <p className="verdict-authors">
             {(paper.authors as string[]).join(", ")} · {paper.categories.join(", ")}
           </p>
-          <p className="verdict-abstract">{paper.abstract}</p>
+          <Abstract text={paper.abstract} />
           <p className="run-fact">
             published {new Date(paper.published_at).toISOString().slice(0, 10)} · ingested{" "}
             {ago(paper.ingested_at)}
@@ -156,7 +179,7 @@ export function EntityView({ id }: { id: string }) {
         </section>
       )}
 
-      {groupLinks(dedupedLinks(page.linksOut), "out").map(([label, links]) => (
+      {groupLinks(otherLinksOut, "out").map(([label, links]) => (
         <LinkGroup key={`out-${label}`} title={label} links={links} />
       ))}
       {groupLinks(dedupedLinks(page.linksIn), "in").map(([label, links]) => (

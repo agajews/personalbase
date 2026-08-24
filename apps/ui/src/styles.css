@@ -983,11 +983,48 @@ button.mark.on {
   margin: 0;
 }
 
+/* Save / want-to-read sit against the right rule, clear of the title. */
+.entity-head .mark-buttons {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .entity-kind {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Affiliations lead the page: one horizontal Newsreader row under the title,
+   the same serif the link groups set entity names in. */
+.entity-affiliations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  margin: 8px 0 20px;
+  font-family: var(--serif);
+  font-size: 17px;
+}
+
+.affiliation-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.affiliation-link:hover {
+  text-decoration: underline;
+}
+
+/* The separator rides on the end of each name, so a row that wraps never
+   starts a line with an orphan dot. It is inline-block so the link's hover
+   underline stops at the name and leaves the dot alone. */
+.affiliation-link:not(:last-child)::after {
+  content: "\00b7";
+  display: inline-block;
+  margin-left: 8px;
   color: var(--muted);
 }
 
