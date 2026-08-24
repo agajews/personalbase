@@ -38,7 +38,6 @@ export interface AppState {
   filters: FilterSummary[];
   papers: { total: number; latest: string | null };
   marks: { saved: number; wantToRead: number };
-  chats: ChatSummary[];
   jobs: JobRow[];
   runs: RunRow[];
   tail: TailRow[];
@@ -319,6 +318,7 @@ export const api = {
     request(`/api/topics/${encodeURIComponent(slug)}`),
   classify: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
+  chats: (): Promise<{ chats: ChatSummary[] }> => request("/api/chats"),
   chatTurns: (chatUid: string): Promise<{ turns: ChatTurn[] }> =>
     request(`/api/chats/${encodeURIComponent(chatUid)}`),
   tables: (): Promise<TableList> => request("/api/tables"),

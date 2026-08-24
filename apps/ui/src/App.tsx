@@ -157,28 +157,11 @@ export function App() {
             <span className="filter-name">Today</span>
           </button>
           <button
-            className={`filter-item ${route.kind === "chat" && route.uid === null ? "active" : ""}`}
+            className={`filter-item ${route.kind === "chat" ? "active" : ""}`}
             onClick={() => navTo("/chat")}
           >
-            <span className="filter-name">New chat</span>
+            <span className="filter-name">Chat</span>
           </button>
-          {state !== undefined && state !== null && state.chats.length > 0 && (
-            <>
-              <div className="rail-label">Chats</div>
-              <nav>
-                {state.chats.map((ch) => (
-                  <button
-                    key={ch.chatUid}
-                    className={`filter-item chat-item ${route.kind === "chat" && route.uid === ch.chatUid ? "active" : ""}`}
-                    onClick={() => navTo(`/chat/${ch.chatUid}`)}
-                    title={ch.title}
-                  >
-                    <span className="filter-name chat-title">{ch.title}</span>
-                  </button>
-                ))}
-              </nav>
-            </>
-          )}
           <button
             className={`filter-item ${route.kind === "marked" && route.mark === "want_to_read" ? "active" : ""}`}
             onClick={() => navTo("/want-to-read")}

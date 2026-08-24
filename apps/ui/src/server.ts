@@ -157,14 +157,7 @@ app.get("/api/state", async (c) => {
     select seq, type, source, occurred_at from events order by seq desc limit 10`;
   const markCounts = await sql`
     select mark, count(*)::int as n from paper_marks group by mark`;
-  const chats = await sql`
-    select chat_uid, title, last_at from chats order by last_at desc limit 15`;
   return c.json({
-    chats: chats.map((ch) => ({
-      chatUid: ch["chat_uid"],
-      title: ch["title"],
-      lastAt: ch["last_at"],
-    })),
     marks: {
       saved: markCounts.find((m) => m["mark"] === "saved")?.["n"] ?? 0,
       wantToRead: markCounts.find((m) => m["mark"] === "want_to_read")?.["n"] ?? 0,
@@ -960,6 +953,18 @@ app.post("/api/chat/stream", async (c) => {
         }),
       });
     }
+  });
+});
+
+app.get("/api/chats", async (c) => {
+  const chats = await sql`
+    select chat_uid, title, last_at from chats order by last_at desc limit 30`;
+  return c.json({
+    chats: chats.map((ch) => ({
+      chatUid: ch["chat_uid"],
+      title: ch["title"],
+      lastAt: ch["last_at"],
+    })),
   });
 });
 

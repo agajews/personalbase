@@ -641,6 +641,69 @@ button.mark.on {
   margin-top: 10px;
 }
 
+/* ---- chat layout: thread + history rail on the right ---- */
+
+.chat-layout {
+  display: flex;
+  gap: 22px;
+  max-width: 980px;
+}
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-history {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.chat-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.chat-history-item:hover {
+  background: var(--card);
+}
+
+.chat-history-item.active {
+  background: var(--card);
+  border-color: var(--line);
+}
+
+.chat-history-title {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chat-history-when {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
 /* ---- chat home (Claude-style centered composer) ---- */
 
 .chat-home {
