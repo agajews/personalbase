@@ -974,6 +974,29 @@ app.get("/api/topics/:slug", async (c) => {
 // relation between a saved paper and something it belongs to, with a strength.
 // One set of endpoints serves all three; only the membership differs.
 
+// The tagger's own status: the vocabulary it invented and how much of the
+// library it has reached. Tag-specific, so it sits outside the graph modes.
+app.get("/api/tags", async (c) => {
+  const tags = await sql`
+    select v.slug, v.name, v.description, v.facet, v.vocab_id,
+           count(it.entity_id)::int as items
+    from tag_vocab v left join item_tags it on it.slug = v.slug
+    group by v.slug, v.name, v.description, v.facet, v.vocab_id, v.position
+    order by v.position`;
+  const tagged = await sql`select count(distinct entity_id)::int as n from item_tags`;
+  return c.json({
+    vocabId: tags[0]?.["vocab_id"] ?? null,
+    tagged: tagged[0]!["n"],
+    tags: tags.map((t) => ({
+      slug: t["slug"],
+      name: t["name"],
+      description: t["description"],
+      facet: t["facet"],
+      items: t["items"],
+    })),
+  });
+});
+
 const graphModes = {
   tags: {
     label: "tags",
