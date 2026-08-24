@@ -106,9 +106,13 @@ function ChatHistory({
 }
 
 export function ChatView({ uid }: { uid: string | null }) {
-  const [chatUid, setChatUid] = useState<string | null>(uid);
+  // chatUid starts null even when uid is set, so the route effect below
+  // always fetches on a fresh mount (initializing it to uid made the effect
+  // skip the load and show the blank-chat home for existing chats).
+  const [chatUid, setChatUid] = useState<string | null>(null);
   const [turns, setTurns] = useState<LiveTurn[]>([]);
   const [question, setQuestion] = useState<ChatQuestion | null>(null);
+  const [loading, setLoading] = useState(uid !== null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -127,7 +131,9 @@ export function ChatView({ uid }: { uid: string | null }) {
     return () => clearInterval(timer);
   }, [uid]);
 
-  // Route → view: a different chat selected in the sidebar, or "new chat".
+  // Route → view: initial mount, a different chat selected in the sidebar,
+  // or "new chat". The guard only skips the self-assignment send() makes when
+  // it mints a uid and updates the hash mid-stream.
   useEffect(() => {
     if (uid === chatUid) {
       return;
@@ -137,10 +143,15 @@ export function ChatView({ uid }: { uid: string | null }) {
     setQuestion(null);
     setError(null);
     if (uid !== null) {
-      void api.chatTurns(uid).then((r) => {
-        setTurns(r.turns);
-        setQuestion(r.question);
-      });
+      setLoading(true);
+      void api
+        .chatTurns(uid)
+        .then((r) => {
+          setTurns(r.turns);
+          setQuestion(r.question);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setLoading(false));
     }
   }, [uid]);
 
@@ -201,9 +212,13 @@ export function ChatView({ uid }: { uid: string | null }) {
     );
 
   // Fresh chat, nothing said yet: the large centered composer — unless this
-  // is a question chat, which opens straight onto the exercise.
-  const main =
-    turns.length === 0 && !busy && question === null ? (
+  // is a question chat, which opens straight onto the exercise, or we are
+  // still loading an existing chat (showing home would flash the wrong view).
+  const main = loading ? (
+    <div className="chat-view">
+      <span className="working">loading…</span>
+    </div>
+  ) : turns.length === 0 && !busy && question === null ? (
       <div className="chat-home">
         <h1 className="chat-home-title">What are we looking for?</h1>
         <p className="chat-home-sub">
