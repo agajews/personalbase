@@ -18,7 +18,14 @@ const defaultCount = 12;
 export const resurfacerReactor: Reactor = {
   kind: "reactor",
   name: "resurfacer",
-  trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} },
+  // 6am Pacific: the sample day is the UTC date, and any morning-Pacific
+  // hour maps to the same UTC calendar day, so "today's" shelf appears with
+  // the morning batch instead of at whatever hour the cron drifted to.
+  trigger: {
+    kind: "cron",
+    schedule: { dailyAtHour: 6, timeZone: "America/Los_Angeles" },
+    payload: {},
+  },
   async run(ctx, input): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
       throw new Error("resurfacer only supports job triggers");

@@ -91,6 +91,27 @@ describe("paper-filter reactor", () => {
     ]);
   });
 
+  test("an ingested paper schedules one shared sweep job per burst", async () => {
+    const event = {
+      seq: 1n,
+      eventUid: crypto.randomUUID(),
+      type: "arxiv.paper.ingested",
+      schemaVersion: 1,
+      source: "test",
+      occurredAt: new Date(),
+      recordedAt: new Date(),
+      payload: {},
+      causedByUid: null,
+      correctsUid: null,
+    };
+    await runReactor(sql, coreRegistry, reactor, { kind: "event", event });
+    await runReactor(sql, coreRegistry, reactor, { kind: "event", event });
+    const jobs = await sql`
+      select job_id from jobs where process = 'reactor:paper-filter' and status = 'pending'`;
+    expect(jobs).toHaveLength(1); // the second event deduped into the same sweep
+    await sql`delete from jobs where process = 'reactor:paper-filter'`;
+  });
+
   test("rerunning with an unchanged prompt judges nothing (no LLM spend)", async () => {
     const batchesBefore = judgedBatches.length;
     const result = await runReactor(sql, coreRegistry, reactor, {

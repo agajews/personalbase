@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Reactor, ReactorEvent } from "@nc/process";
+import type { Reactor, ReactorEvent, ReactorResult } from "@nc/process";
 import { anthropicJudge, type JudgeFn, type PaperForJudging } from "./judge.js";
 
 export const paperFilterJobPayload = z.object({
@@ -12,7 +12,10 @@ export const paperFilterJobPayload = z.object({
 export type PaperFilterJobPayload = z.infer<typeof paperFilterJobPayload>;
 
 const chunkSize = 12;
-const defaultWindowDays = 3;
+// Must reach back at least as far as the ingest sweep's window (see
+// arxiv.ts): papers announced after a weekend arrive with updated_at several
+// days in the past, and a shorter window here would never judge them.
+const defaultWindowDays = 6;
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -39,13 +42,27 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
   return {
     kind: "reactor",
     name: "paper-filter",
-    // Daily judging over the same trailing window the ingest sweep covers;
-    // already-judged (filter, prompt_hash, paper) triples are skipped, so the
-    // scheduled run only pays for genuinely new papers or edited prompts.
-    trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} },
-    async run(ctx, input): Promise<ReactorEvent[]> {
-      if (input.kind !== "job") {
-        throw new Error("paper-filter reactor only supports job triggers");
+    // Judging reacts to papers arriving rather than running on a clock. Each
+    // ingested-paper event schedules one shared sweep job (hourly dedupe
+    // bucket) instead of judging inline, because judging batches 12 papers
+    // per LLM call; the delay gives the papers fold time to catch up before
+    // the sweep queries it. Already-judged (filter, prompt_hash, paper)
+    // triples are skipped, so sweeps only pay for genuinely new papers or
+    // edited prompts.
+    trigger: { kind: "event", consumes: ["arxiv.paper.ingested"] },
+    async run(ctx, input): Promise<ReactorResult> {
+      if (input.kind === "event") {
+        return {
+          events: [],
+          followUps: [
+            {
+              process: "reactor:paper-filter",
+              payload: {},
+              runAfterSeconds: 60,
+              dedupeKey: `paper-filter:sweep:${new Date().toISOString().slice(0, 13)}`,
+            },
+          ],
+        };
       }
       const parsed = paperFilterJobPayload.parse(input.payload);
       const to = parsed.to ?? new Date().toISOString();
@@ -71,7 +88,8 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
           await ctx.sql`
             select p.arxiv_id, p.title, p.abstract, p.categories
             from papers p
-            where p.updated_at >= ${payload.from} and p.updated_at < ${payload.to}
+            where ((p.updated_at >= ${payload.from} and p.updated_at < ${payload.to})
+                or (p.ingested_at >= ${payload.from} and p.ingested_at < ${payload.to}))
               and not exists (
                 select 1 from filter_results r
                 where r.filter_name = ${filter.name}
