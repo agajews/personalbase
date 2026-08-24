@@ -4,6 +4,7 @@ export { libraryFold } from "./library.js";
 export { marksFold } from "./marks.js";
 export { devFold } from "./dev.js";
 export { taxonomyFold } from "./taxonomy.js";
+export { tagsFold } from "./tags.js";
 export { chatsFold } from "./chats.js";
 export { resurfacedFold } from "./resurfaced.js";
 export { questionsFold } from "./questions.js";

@@ -229,6 +229,71 @@ export const agentTaxonomyProposedV1 = z.object({
 });
 export type AgentTaxonomyProposed = z.infer<typeof agentTaxonomyProposedV1>;
 
+// ---- granular topic tags over the saved library ----
+
+/**
+ * The tag vocabulary the tagger invents for this collection: many small,
+ * specific tags rather than the taxonomy's handful of broad groups. Each
+ * proposal replaces the vocabulary wholesale; `vocabId` hashes its contents,
+ * so assignments can name the vocabulary they were made under.
+ */
+export const agentTagVocabProposedV1 = z.object({
+  vocabId: z.string().min(1),
+  tags: z.array(
+    z.object({
+      slug: z.string().min(1), // kebab-case, stable within a vocabulary
+      name: z.string().min(1),
+      description: z.string(),
+      /** Broad facet the tag sits in ('method', 'task', …), for grouping. */
+      facet: z.string().min(1),
+    }),
+  ),
+});
+export type AgentTagVocabProposed = z.infer<typeof agentTagVocabProposedV1>;
+
+/**
+ * Every tag one saved item earned, as a single fact per item — many tags per
+ * paper is the point, so the assignment, not the individual tag, is the event.
+ */
+export const agentItemTaggedV1 = z.object({
+  vocabId: z.string().min(1),
+  target: entityRefSchema(),
+  tags: z.array(
+    z.object({
+      slug: z.string().min(1),
+      confidence: z.number().min(0).max(1),
+    }),
+  ),
+});
+
+/**
+ * v2 makes membership continuous: `strength` is how central the tag is to the
+ * work, not how sure the model is that it applies at all. A paper is a strong
+ * match for one or two tags and a weak match for several more.
+ */
+export const agentItemTaggedV2 = z.object({
+  vocabId: z.string().min(1),
+  target: entityRefSchema(),
+  tags: z.array(
+    z.object({
+      slug: z.string().min(1),
+      strength: z.number().min(0).max(1),
+    }),
+  ),
+});
+export type AgentItemTagged = z.infer<typeof agentItemTaggedV2>;
+
+function upcastItemTaggedV1(previous: unknown): unknown {
+  const v1 = agentItemTaggedV1.parse(previous);
+  // v1 confidence was derived from the order the model listed slugs in, which
+  // is exactly the ranking `strength` now carries explicitly.
+  return {
+    vocabId: v1.vocabId,
+    target: v1.target,
+    tags: v1.tags.map((t) => ({ slug: t.slug, strength: t.confidence })),
+  };
+}
+
 // ---- operator chat: conversations are events like everything else ----
 
 export const userChatMessageSentV1 = z.object({
@@ -315,6 +380,14 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "dev.pr.merged", versions: [{ schema: devPrMergedV1 }] },
   { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
   { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
+  { type: "agent.tagvocab.proposed", versions: [{ schema: agentTagVocabProposedV1 }] },
+  {
+    type: "agent.item.tagged",
+    versions: [
+      { schema: agentItemTaggedV1 },
+      { schema: agentItemTaggedV2, upcast: upcastItemTaggedV1 },
+    ],
+  },
   { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
   { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
   { type: "surface.day.resurfaced", versions: [{ schema: surfaceDayResurfacedV1 }] },
