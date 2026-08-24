@@ -209,7 +209,9 @@ export PATH="/nc/bin:$HOME/.local/bin:$PATH"
 cd /nc/repo 2>/dev/null || exit 0
 if [ -n "$(git log "origin/$DEV_TRUNK..HEAD" --oneline 2>/dev/null)" ]; then
   echo "[nc] pushing $DEV_BRANCH"
-  git push -q origin "$DEV_BRANCH" 2>&1 || echo "[nc] push failed"
+  # force-with-lease: the branch is this agent's own, and rebasing onto a
+  # moved trunk (the standard conflict-resolution flow) rewrites it.
+  git push -q --force-with-lease origin "$DEV_BRANCH" 2>&1 || echo "[nc] push failed"
   node "$NC_RUN_DIR/finish.mjs" || echo "[nc] PR ensure failed"
 fi
 exit 0
