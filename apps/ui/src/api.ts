@@ -396,6 +396,7 @@ export interface DevTaskListItem {
   taskUid: string;
   title: string;
   status: string;
+  previewUrl: string | null;
   createdAt: string;
   latestRun: DevRunSummary | null;
 }
@@ -417,7 +418,14 @@ export interface DevRun {
 }
 
 export interface DevTaskPage {
-  task: { taskUid: string; title: string; spec: string; status: string; createdAt: string };
+  task: {
+    taskUid: string;
+    title: string;
+    spec: string;
+    status: string;
+    previewUrl: string | null;
+    createdAt: string;
+  };
   runs: DevRun[];
 }
 

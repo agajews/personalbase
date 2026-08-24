@@ -1,4 +1,5 @@
 import {
+  devPreviewStartedV1,
   devPrMergedV1,
   devPrOpenedV1,
   devRunFinishedV1,
@@ -20,10 +21,11 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 2, // generated titles: spec-only task events + dev.task.titled
+  version: 3, // live previews: dev.preview.started -> dev_tasks.preview_url
   consumes: [
     "user.devtask.created",
     "dev.task.titled",
+    "dev.preview.started",
     "user.devmerge.requested",
     "dev.run.started",
     "dev.transcript.appended",
@@ -39,6 +41,7 @@ export const devFold: Fold = {
         title       text not null,
         spec        text not null,
         status      text not null,        -- queued|running|pr_open|merging|merged|failed
+        preview_url text,                 -- live dev-server preview, when running
         created_at  timestamptz not null,
         updated_seq bigint not null
       )`;
@@ -125,6 +128,13 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
       where task_uid = ${titled.taskUid}`;
     return;
   }
+  if (event.type === "dev.preview.started") {
+    const preview = devPreviewStartedV1.parse(event.payload);
+    await tx`
+      update dev_tasks set preview_url = ${preview.url}, updated_seq = ${seq}
+      where task_uid = ${preview.taskUid}`;
+    return;
+  }
   if (event.type === "user.devmerge.requested") {
     const request = userDevmergeRequestedV1.parse(event.payload);
     await tx`
@@ -162,8 +172,9 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
     await tx`
       update dev_runs set merged_sha = ${merged.mergedSha}
       where run_uid = ${merged.runUid}`;
+    // The merge lane destroys the task's sandboxes, so the preview dies too.
     await tx`
-      update dev_tasks set status = 'merged', updated_seq = ${seq}
+      update dev_tasks set status = 'merged', preview_url = null, updated_seq = ${seq}
       where task_uid = ${merged.taskUid}`;
     return;
   }

@@ -19,6 +19,8 @@ export const devPollPayload = z.object({
   cursor: z.number().int().nonnegative(),
   chunkSeq: z.number().int().nonnegative(),
   polls: z.number().int().nonnegative(),
+  /** Set once the preview event has been emitted, so it fires exactly once. */
+  previewSeen: z.boolean().default(false),
 });
 export type DevPollPayload = z.infer<typeof devPollPayload>;
 
@@ -128,6 +130,7 @@ export async function launchRun(
     cursor: 0,
     chunkSeq: preambleEvents.length,
     polls: 0,
+    previewSeen: false,
   };
   return {
     events: [
@@ -183,6 +186,23 @@ export async function pollRun(
   }
 
   const events: ReactorEvent[] = [];
+  // First sighting of the preview marker: surface the sandbox's SSO-gated
+  // URL as a fact (once per task; the idempotency key dedups retries).
+  let previewSeen = payload.previewSeen;
+  if (poll.previewRunning && !previewSeen) {
+    const url = await sandbox.url();
+    if (url !== null) {
+      events.push({
+        type: "dev.preview.started",
+        schemaVersion: 1,
+        occurredAt: new Date().toISOString(),
+        causedByUid: payload.taskUid,
+        idempotencyKey: `dev:${payload.taskUid}:preview:${payload.sandbox}`,
+        payload: { taskUid: payload.taskUid, runUid: payload.runUid, url },
+      });
+      previewSeen = true;
+    }
+  }
   let consumedBytes = 0;
   if (poll.content !== "") {
     // Cut at the last newline so stream-json lines stay whole across chunks
@@ -243,6 +263,7 @@ export async function pollRun(
           cursor: payload.cursor + consumedBytes,
           chunkSeq: consumedBytes > 0 ? payload.chunkSeq + 1 : payload.chunkSeq,
           polls: payload.polls + 1,
+          previewSeen,
         },
         runAfterSeconds: pollIntervalSeconds,
         dedupeKey: `dev:${payload.runUid}:poll:${payload.polls + 2}`,

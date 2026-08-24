@@ -30,8 +30,13 @@ interface FakeRun {
 class FakeSandbox implements Sandbox {
   runs = new Map<string, FakeRun>();
   destroyed = false;
+  previewRunning = false;
 
   constructor(readonly name: string) {}
+
+  async url(): Promise<string | null> {
+    return `https://${this.name}.sprites.app`;
+  }
 
   async start(
     runDir: string,
@@ -62,6 +67,7 @@ class FakeSandbox implements Sandbox {
       exited: run.exitCode !== null,
       exitCode: run.exitCode,
       result: run.result,
+      previewRunning: this.previewRunning,
     };
   }
 
@@ -93,6 +99,7 @@ const config = (): DevConfig => ({
   anthropicApiKey: "api-key",
   flyDeployTokenWorker: "fly-worker",
   flyDeployTokenUi: "fly-ui",
+  previewDatabaseUrl: "postgres://readonly@example/db",
 });
 
 const fakeTitler = async (spec: string) => ({
@@ -169,8 +176,28 @@ describe("dev-agent flow", () => {
       "[nc] cloning me/repo\nline two\n",
     );
 
-    // Quiet poll: nothing new, chain still continues.
+    // The agent starts a live preview: the next poll surfaces the sandbox
+    // URL exactly once.
+    box.previewRunning = true;
     expect(await duePolls()).toBe(1);
+    const previews = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["dev.preview.started"],
+      limit: 10,
+    });
+    expect(previews).toHaveLength(1);
+    expect((previews[0]!.payload as { url: string }).url).toBe(
+      `https://${payload.sandbox}.sprites.app`,
+    );
+    // Later polls do not re-emit it.
+    expect(await duePolls()).toBe(1);
+    expect(
+      await readEvents(sql, coreRegistry, {
+        afterSeq: 0n,
+        patterns: ["dev.preview.started"],
+        limit: 10,
+      }),
+    ).toHaveLength(1);
 
     // Exit with a PR result: pr.opened + run.finished; the sandbox stays
     // alive so the conversation can continue.
@@ -196,9 +223,10 @@ describe("dev-agent flow", () => {
     expect(await duePolls()).toBe(0);
 
     await catchUpFold(sql, coreRegistry, devFold);
-    const tasks = await sql`select status, title from dev_tasks`;
+    const tasks = await sql`select status, title, preview_url from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("pr_open");
     expect(tasks[0]!["title"]).toBe("Add a widget");
+    expect(tasks[0]!["preview_url"]).toBe(`https://${payload.sandbox}.sprites.app`);
     const runs = await sql`select status, pr_number, sandbox from dev_runs`;
     expect(runs[0]!["status"]).toBe("succeeded");
     expect(runs[0]!["pr_number"]).toBe(7);
@@ -308,8 +336,10 @@ describe("dev-agent flow", () => {
     expect(boxes.get(featureSandbox)!.destroyed).toBe(true);
 
     await catchUpFold(sql, coreRegistry, devFold);
-    const tasks = await sql`select status from dev_tasks`;
+    const tasks = await sql`select status, preview_url from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("merged");
+    // The sandbox died with the merge; the preview link dies with it.
+    expect(tasks[0]!["preview_url"]).toBeNull();
   });
 
   test("nonzero exit fails the run and keeps the sandbox", async () => {

@@ -467,6 +467,25 @@ Notes that matter:
 - **Human gate first**: nothing merges without a `user.devmerge.requested` event. Auto-merge later is one reactor-trigger change, not a redesign.
 - Trunk is configurable (`DEV_TRUNK`); the canonical trunk is `main` — agent PRs target it and the merge agent deploys from it.
 
+### 10.2b Interactive tasks and live previews
+
+There is deliberately **one agent concept**: a task is a conversation, and what
+kind of task it is falls out of what you ask for. Turns that end with commits
+push and open/update the branch's PR; turns without commits just keep the
+conversation open — so "build X and PR it" and "start a dev server and iterate
+with me until I say ship it" are the same machinery with different instructions.
+
+For UI work the agent runs `nc-preview` in its sandbox: the app's dev server
+(vite + API) against a **read-only** database role, reached through the
+sandbox's own HTTPS URL. That URL stays in sprite-auth mode — browsers get an
+SSO login via fly.io, so previews are private to the org with zero custom auth
+and nothing public. The poller notices the preview marker and surfaces the URL
+on the task page as a fact (`dev.preview.started`); vite hot-reloads the
+agent's edits, so the iterate loop is: message the agent → watch the preview
+change. Suspended sandboxes wake on incoming HTTP, so the link keeps working
+between turns for free; the merge lane's cleanup kills the preview with the
+sandbox.
+
 ### 10.3 Trust boundaries
 
 - Feature sandboxes get `GITHUB_TOKEN` (push + PR) and `ANTHROPIC_API_KEY`. Only the merge lane's sandbox gets Fly deploy tokens.

@@ -1314,6 +1314,20 @@ footer {
   font-size: 12px;
 }
 
+.preview-link {
+  font-weight: 600;
+  color: var(--spruce);
+  border: 1px solid var(--spruce);
+  border-radius: 6px;
+  padding: 6px 12px;
+  text-decoration: none;
+}
+
+.preview-link:hover {
+  background: var(--spruce);
+  color: #f2f6f2;
+}
+
 /* ---- small screens ---- */
 
 @media (max-width: 760px) {

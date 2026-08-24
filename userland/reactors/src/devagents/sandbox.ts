@@ -13,6 +13,8 @@ export interface SandboxPoll {
   readonly exitCode: number | null;
   /** Parsed /nc/result.json, when the script has exited and wrote one. */
   readonly result: unknown;
+  /** True once the agent has started a dev-server preview (/nc/preview.json). */
+  readonly previewRunning: boolean;
 }
 
 export interface Sandbox {
@@ -28,6 +30,8 @@ export interface Sandbox {
     env: Readonly<Record<string, string>>,
   ): Promise<void>;
   poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll>;
+  /** The sandbox's SSO-gated HTTPS URL (null until known). */
+  url(): Promise<string | null>;
   destroy(): Promise<void>;
 }
 
@@ -129,11 +133,18 @@ class SpriteSandbox implements Sandbox {
       60_000,
     );
     const content = Buffer.from(chunk.trim(), "base64").toString("utf8");
-    const exitRaw = (
-      await this.exec(`cat ${runDir}/exit-code 2>/dev/null; true`, 60_000)
+    // exit-code and the preview marker piggyback on one round trip.
+    const state = (
+      await this.exec(
+        `echo "exit=$(cat ${runDir}/exit-code 2>/dev/null)"; ` +
+          `echo "preview=$([ -f /nc/preview.json ] && echo 1)"; true`,
+        60_000,
+      )
     ).trim();
+    const exitRaw = /exit=(\S*)/.exec(state)?.[1] ?? "";
+    const previewRunning = /preview=1/.test(state);
     if (exitRaw === "") {
-      return { content, exited: false, exitCode: null, result: null };
+      return { content, exited: false, exitCode: null, result: null, previewRunning };
     }
     const resultRaw = (
       await this.exec(`cat ${runDir}/result.json 2>/dev/null; true`, 60_000)
@@ -146,7 +157,12 @@ class SpriteSandbox implements Sandbox {
         result = null;
       }
     }
-    return { content, exited: true, exitCode: Number(exitRaw), result };
+    return { content, exited: true, exitCode: Number(exitRaw), result, previewRunning };
+  }
+
+  async url(): Promise<string | null> {
+    const fetched = await spritesClient().getSprite(this.name);
+    return fetched.url ?? null;
   }
 
   async destroy(): Promise<void> {

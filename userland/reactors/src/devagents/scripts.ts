@@ -15,6 +15,8 @@ export interface DevConfig {
   readonly anthropicApiKey: string;
   readonly flyDeployTokenWorker: string;
   readonly flyDeployTokenUi: string;
+  /** Read-only connection string for live UI previews ("" disables them). */
+  readonly previewDatabaseUrl: string;
 }
 
 export function devConfigFromEnv(): DevConfig {
@@ -33,6 +35,7 @@ export function devConfigFromEnv(): DevConfig {
     // Only the merge lane passes these into a sandbox.
     flyDeployTokenWorker: process.env["FLY_DEPLOY_TOKEN_WORKER"] ?? "",
     flyDeployTokenUi: process.env["FLY_DEPLOY_TOKEN_UI"] ?? "",
+    previewDatabaseUrl: process.env["PREVIEW_DATABASE_URL"] ?? "",
   };
 }
 
@@ -54,11 +57,17 @@ ${args.spec}
 # House rules
 
 - Read DESIGN.md and the surrounding code first; match the existing style exactly.
-- Commit as you go with clear messages. Do NOT push and do NOT open a PR — the \
-harness pushes your branch and opens the PR when you finish.
-- Before finishing, write /nc/pr.md: first line is the PR title, the rest is the PR \
-description (what changed, how you verified it).
-- Run \`pnpm typecheck\` and fix any failures before finishing.
+- Do NOT push and do NOT open a PR yourself — when your turn ends, the harness \
+pushes any commits on your branch and opens (or updates) the PR. A turn with no \
+commits simply continues the conversation, so for interactive work keep iterating \
+with the user and commit when the change is ready for review (or when they ask).
+- For UI work, run \`nc-preview\` (already on PATH) to start a live dev server \
+against a read-only copy of production data — a private preview link appears on \
+the user's task page automatically. Vite hot-reloads your edits; rerun nc-preview \
+only after dependency or server-code changes.
+- Before a turn that should produce the PR, write /nc/pr.md: first line is the PR \
+title, the rest is the PR description (what changed, how you verified it).
+- Run \`pnpm typecheck\` and fix any failures before finishing a turn with commits.
 - Database-backed tests are unavailable in this sandbox; do not block on them, but \
 keep \`pnpm typecheck\` green.
 - Never modify ${args.trunk} directly, never rewrite public history, never write \
@@ -92,6 +101,7 @@ else
   git checkout -q "$DEV_BRANCH" || fail "branch checkout failed"
 fi
 command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
+install -m 0755 "$NC_RUN_DIR/preview.sh" /nc/bin/nc-preview 2> /dev/null || true
 if [ ! -d /nc/repo/node_modules ]; then
   echo "[nc] installing dependencies"
   pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 \
@@ -113,11 +123,12 @@ fi
 CLAUDE_EXIT=$?
 echo "[nc] claude exited with $CLAUDE_EXIT"
 cd /nc/repo
-git add -A > /dev/null 2>&1 && git commit -qm "Dev agent: remaining working-tree changes" > /dev/null 2>&1
 if [ -z "$(git log "origin/$DEV_TRUNK..HEAD" --oneline)" ]; then
-  echo "[nc] no commits on the branch"
-  fail "agent made no commits"
+  echo "[nc] no commits yet — conversation stays open"
+  echo '{"pending":true}' > "$NC_RUN_DIR/result.json"
+  exit 0
 fi
+git add -A > /dev/null 2>&1 && git commit -qm "Dev agent: remaining working-tree changes" > /dev/null 2>&1
 echo "[nc] pushing $DEV_BRANCH"
 git push -q origin "$DEV_BRANCH" || fail "push failed"
 echo "[nc] ensuring pull request"
@@ -176,6 +187,40 @@ if (!response.ok) {
   process.exit(1);
 }
 finish(data);
+`;
+
+/**
+ * Installed as \`nc-preview\` in the sandbox. Starts (or restarts) the app's
+ * dev servers against the read-only preview database; the poller notices
+ * /nc/preview.json and surfaces the sandbox's SSO-gated URL on the task page.
+ * Idempotent; vite hot-reloads edits without a rerun.
+ */
+export const previewScript = `#!/usr/bin/env bash
+cd /nc/repo || { echo "no /nc/repo"; exit 1; }
+if [ -z "\${PREVIEW_DATABASE_URL:-}" ]; then
+  echo "PREVIEW_DATABASE_URL is not set; previews are disabled"
+  exit 1
+fi
+pkill -f 'tsx apps/ui/src/server.ts' > /dev/null 2>&1
+pkill -f vite > /dev/null 2>&1
+sleep 1
+setsid bash -c 'cd /nc/repo && DATABASE_URL="$PREVIEW_DATABASE_URL" NC_PREVIEW=1 \
+HOST=127.0.0.1 PORT=4680 pnpm exec tsx apps/ui/src/server.ts > /nc/preview-api.log 2>&1' \
+  < /dev/null > /dev/null 2>&1 &
+setsid bash -c 'cd /nc/repo && pnpm --filter @nc/ui exec vite --host 0.0.0.0 --port 5173 \
+> /nc/preview-vite.log 2>&1' < /dev/null > /dev/null 2>&1 &
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 2
+  curl -s -o /dev/null http://127.0.0.1:5173/ && break
+done
+if ! curl -s -o /dev/null http://127.0.0.1:5173/; then
+  echo "preview failed to start:"
+  tail -5 /nc/preview-vite.log /nc/preview-api.log 2>/dev/null
+  rm -f /nc/preview.json
+  exit 1
+fi
+echo '{"port":5173}' > /nc/preview.json
+echo "preview running — a private link appears on the user's task page"
 `;
 
 export const mergeRunScript = `#!/usr/bin/env bash

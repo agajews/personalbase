@@ -56,7 +56,13 @@ if (databaseUrl === undefined || databaseUrl === "") {
   process.exit(1);
 }
 const sql: Sql = connect(databaseUrl);
-await migrate(sql, kernelMigrationsDir);
+// Preview mode (dev agents' sandboxes): read-only database credentials, so
+// migrations can't (and shouldn't) run; transport auth is the sandbox's
+// SSO-gated URL rather than UI_PASSWORD.
+const previewMode = process.env["NC_PREVIEW"] === "1";
+if (!previewMode) {
+  await migrate(sql, kernelMigrationsDir);
+}
 
 const app = new Hono();
 
@@ -68,7 +74,7 @@ const app = new Hono();
 const uiPassword = process.env["UI_PASSWORD"] ?? "";
 const host = process.env["HOST"] ?? "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 4680);
-if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost") {
+if (uiPassword === "" && host !== "127.0.0.1" && host !== "localhost" && !previewMode) {
   console.error(`refusing to bind ${host} without UI_PASSWORD set`);
   process.exit(1);
 }
@@ -763,7 +769,7 @@ app.get("/api/marked/:mark", async (c) => {
 
 app.get("/api/dev/tasks", async (c) => {
   const tasks = await sql`
-    select t.task_uid, t.title, t.status, t.created_at,
+    select t.task_uid, t.title, t.status, t.preview_url, t.created_at,
            r.run_uid, r.kind, r.status as run_status, r.pr_number, r.pr_url,
            r.summary, r.error, r.started_at, r.finished_at
     from dev_tasks t
@@ -778,6 +784,7 @@ app.get("/api/dev/tasks", async (c) => {
       taskUid: t["task_uid"],
       title: t["title"],
       status: t["status"],
+      previewUrl: t["preview_url"],
       createdAt: t["created_at"],
       latestRun:
         t["run_uid"] === null
@@ -800,7 +807,7 @@ app.get("/api/dev/tasks", async (c) => {
 app.get("/api/dev/tasks/:uid", async (c) => {
   const uid = c.req.param("uid");
   const tasks = await sql`
-    select task_uid, title, spec, status, created_at from dev_tasks
+    select task_uid, title, spec, status, preview_url, created_at from dev_tasks
     where task_uid = ${uid}`;
   const task = tasks[0];
   if (task === undefined) {
@@ -817,6 +824,7 @@ app.get("/api/dev/tasks/:uid", async (c) => {
       title: task["title"],
       spec: task["spec"],
       status: task["status"],
+      previewUrl: task["preview_url"],
       createdAt: task["created_at"],
     },
     runs: runs.map((r) => ({

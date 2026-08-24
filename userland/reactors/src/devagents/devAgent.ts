@@ -11,6 +11,7 @@ import {
   featureFinishScript,
   featureRunScript,
   featureSpec,
+  previewScript,
   type DevConfig,
 } from "./scripts.js";
 
@@ -60,7 +61,14 @@ function prEvents(
 ): { events: ReactorEvent[]; summary: string | null } {
   const parsed = resultSchema.safeParse(result);
   if (!parsed.success) {
-    return { events: [], summary: "turn succeeded but wrote no PR result" };
+    const pending =
+      typeof result === "object" && result !== null && "pending" in result;
+    return {
+      events: [],
+      summary: pending
+        ? "iterating — no commits yet, conversation open"
+        : "turn succeeded but wrote no PR result",
+    };
   }
   const pr: ReactorEvent = {
     type: "dev.pr.opened",
@@ -145,6 +153,7 @@ export function makeDevAgentReactor(
               spec: task.spec,
             }),
             "finish.mjs": featureFinishScript,
+            "preview.sh": previewScript,
           },
           env: {
             DEV_REPO: cfg.repo,
@@ -155,6 +164,7 @@ export function makeDevAgentReactor(
             DEV_RESUME: "0",
             GITHUB_TOKEN: cfg.githubToken,
             ANTHROPIC_API_KEY: cfg.anthropicApiKey,
+            PREVIEW_DATABASE_URL: cfg.previewDatabaseUrl,
           },
         });
         return {
@@ -242,6 +252,7 @@ export function makeDevAgentReactor(
           "run.sh": featureRunScript,
           "prompt.md": followUpPrompt(payload.message),
           "finish.mjs": featureFinishScript,
+          "preview.sh": previewScript,
         },
         env: {
           DEV_REPO: cfg.repo,
@@ -252,6 +263,7 @@ export function makeDevAgentReactor(
           DEV_RESUME: "1",
           GITHUB_TOKEN: cfg.githubToken,
           ANTHROPIC_API_KEY: cfg.anthropicApiKey,
+          PREVIEW_DATABASE_URL: cfg.previewDatabaseUrl,
         },
       });
     },

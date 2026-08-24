@@ -193,6 +193,16 @@ export function TaskView({ uid }: { uid: string }) {
         <h1>{page.task.title}</h1>
       </div>
       <div className="task-actions">
+        {page.task.previewUrl !== null && page.task.status !== "merged" && (
+          <a
+            className="preview-link"
+            href={page.task.previewUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open live preview ↗
+          </a>
+        )}
         {featurePr?.prUrl != null && (
           <a href={featurePr.prUrl} target="_blank" rel="noreferrer">
             PR #{featurePr.prNumber}

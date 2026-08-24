@@ -156,6 +156,15 @@ export const devTranscriptAppendedV1 = z.object({
 });
 export type DevTranscriptAppended = z.infer<typeof devTranscriptAppendedV1>;
 
+/** The agent started a live dev-server preview in its sandbox. */
+export const devPreviewStartedV1 = z.object({
+  taskUid: z.uuid(),
+  runUid: z.uuid(),
+  /** The sandbox's SSO-gated URL (sprite auth; org members only). */
+  url: z.string().min(1),
+});
+export type DevPreviewStarted = z.infer<typeof devPreviewStartedV1>;
+
 export const devPrOpenedV1 = z.object({
   taskUid: z.uuid(),
   runUid: z.uuid(),
@@ -245,6 +254,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
   { type: "dev.task.titled", versions: [{ schema: devTaskTitledV1 }] },
   { type: "user.devmessage.sent", versions: [{ schema: userDevmessageSentV1 }] },
+  { type: "dev.preview.started", versions: [{ schema: devPreviewStartedV1 }] },
   { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },
   { type: "dev.pr.opened", versions: [{ schema: devPrOpenedV1 }] },
