@@ -77,14 +77,17 @@ git config user.email "dev-agent@personalbase.invalid"
 git checkout -qb "$DEV_BRANCH" "origin/$DEV_TRUNK" \
   || { echo '{"error":"branch checkout failed"}' > /nc/result.json; exit 1; }
 echo "[nc] installing dependencies"
-corepack enable > /dev/null 2>&1 || true
-# The sprite image ships node but not pnpm (and corepack may be absent).
-command -v pnpm > /dev/null 2>&1 || npm install -g pnpm > /dev/null 2>&1
-pnpm install --frozen-lockfile > /dev/null 2>&1 \
-  || { echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
+# The image ships corepack but its shim dir is read-only: enable into /nc/bin.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+mkdir -p /nc/bin
+corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
+export PATH="/nc/bin:$HOME/.local/bin:$PATH"
+command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
+pnpm install --frozen-lockfile > /nc/install.log 2>&1 \
+  || { tail -20 /nc/install.log; echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
 echo "[nc] installing claude code"
-npm install -g @anthropic-ai/claude-code > /dev/null 2>&1 \
-  || { echo '{"error":"claude code install failed"}' > /nc/result.json; exit 1; }
+npm install -g @anthropic-ai/claude-code > /nc/claude-install.log 2>&1 \
+  || { tail -20 /nc/claude-install.log; echo '{"error":"claude code install failed"}' > /nc/result.json; exit 1; }
 echo "[nc] starting claude"
 claude -p "$(cat /nc/spec.md)" --output-format stream-json --verbose \
   --dangerously-skip-permissions
@@ -155,10 +158,13 @@ echo "[nc] rebasing onto $DEV_TRUNK"
 git rebase "origin/$DEV_TRUNK" \
   || { echo '{"error":"rebase conflict; resolve manually"}' > /nc/result.json; exit 1; }
 echo "[nc] installing dependencies"
-corepack enable > /dev/null 2>&1 || true
-command -v pnpm > /dev/null 2>&1 || npm install -g pnpm > /dev/null 2>&1
-pnpm install --frozen-lockfile > /dev/null 2>&1 || pnpm install > /dev/null 2>&1 \
-  || { echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+mkdir -p /nc/bin
+corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
+export PATH="/nc/bin:$HOME/.local/bin:$PATH"
+command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
+pnpm install --frozen-lockfile > /nc/install.log 2>&1 || pnpm install > /nc/install.log 2>&1 \
+  || { tail -20 /nc/install.log; echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
 echo "[nc] typechecking the rebased PR"
 pnpm typecheck \
   || { echo '{"error":"typecheck failed on rebased PR"}' > /nc/result.json; exit 1; }
