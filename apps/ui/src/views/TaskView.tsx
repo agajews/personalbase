@@ -66,9 +66,21 @@ function renderLines(raw: string): TranscriptLine[] {
 
 function Transcript({ run }: { run: DevRun }) {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
+  // Tool commands are hidden, but their heartbeat drives the ephemeral
+  // "working…" indicator: the arrival time of the last chunk that carried
+  // tool activity.
+  const [lastTool, setLastTool] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const cursor = useRef(-1);
   const buffer = useRef("");
   const box = useRef<HTMLDivElement>(null);
+
+  const live = run.status === "running";
+  useEffect(() => {
+    if (!live) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [live]);
 
   useEffect(() => {
     cursor.current = -1;
@@ -84,6 +96,9 @@ function Transcript({ run }: { run: DevRun }) {
         if (cancelled || d.chunks.length === 0) return;
         cursor.current = d.chunks[d.chunks.length - 1]!.chunkSeq;
         const text = buffer.current + d.chunks.map((c) => c.content).join("");
+        if (text.includes('"type":"tool_use"')) {
+          setLastTool(new Date(d.chunks[d.chunks.length - 1]!.at).getTime());
+        }
         const parts = text.split("\n");
         buffer.current = parts.pop() ?? "";
         const fresh = parts.flatMap(renderLines);
@@ -108,9 +123,11 @@ function Transcript({ run }: { run: DevRun }) {
     box.current?.scrollTo({ top: box.current.scrollHeight });
   }, [lines]);
 
+  const sinceTool =
+    lastTool === null ? null : Math.max(0, Math.floor((now - lastTool) / 1000));
   return (
     <div className="transcript" ref={box}>
-      {lines.length === 0 && <div className="empty">waiting for output…</div>}
+      {lines.length === 0 && !live && <div className="empty">no output</div>}
       {lines.map((l, i) =>
         l.kind === "text" ? (
           <div key={i} className="t-line t-text t-markdown">
@@ -121,6 +138,14 @@ function Transcript({ run }: { run: DevRun }) {
             {l.text}
           </div>
         ),
+      )}
+      {live && (
+        <div className="t-line t-working">
+          working<span className="working-dots" />
+          {sinceTool !== null && (
+            <span className="working-since"> ({sinceTool}s since last command)</span>
+          )}
+        </div>
       )}
     </div>
   );
