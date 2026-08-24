@@ -197,6 +197,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
 
   return (
     <section className="results">
+      <ResurfacedSection />
       <div className="results-head">
         <span className="results-count">
           {feed === null ? "loading…" : `${feed.items.length} surfaced`}
@@ -219,7 +220,6 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
             ))}
           </div>
         ))}
-      <ResurfacedSection />
     </section>
   );
 }
