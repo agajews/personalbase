@@ -16,6 +16,7 @@ import {
   featureRunScript,
   featureSpec,
   previewScript,
+  requestMergeScript,
   turnEndScript,
   type DevConfig,
 } from "./scripts.js";
@@ -137,6 +138,7 @@ export function makeDevAgentReactor(
             }),
             "finish.mjs": featureFinishScript,
             "preview.sh": previewScript,
+            "request-merge.sh": requestMergeScript,
             "turn-end.sh": turnEndScript,
           },
           env: {
@@ -284,6 +286,7 @@ export function makeDevAgentReactor(
           "prompt.md": followUpPrompt(payload.message),
           "finish.mjs": featureFinishScript,
           "preview.sh": previewScript,
+          "request-merge.sh": requestMergeScript,
           "turn-end.sh": turnEndScript,
         },
         env: {

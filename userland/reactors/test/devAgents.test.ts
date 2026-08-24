@@ -35,6 +35,8 @@ class FakeSandbox implements Sandbox {
   destroyed = false;
   previewRunning = false;
   previewStartedWith: string | null = null;
+  /** Sandbox-global like the real /nc/merge-request.json marker. */
+  mergeRequest: unknown = null;
 
   constructor(readonly name: string) {}
 
@@ -80,6 +82,7 @@ class FakeSandbox implements Sandbox {
       result: run.result,
       previewRunning: this.previewRunning,
       pr: run.pr,
+      mergeRequest: this.mergeRequest,
       idleSeconds: run.idleSeconds,
     };
   }
@@ -356,6 +359,71 @@ describe("dev-agent live sessions", () => {
     const tasks = await sql`select status, preview_url from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("merged");
     expect(tasks[0]!["preview_url"]).toBeNull();
+  });
+
+  test("nc-request-merge routes an agent-initiated merge through the lane", async () => {
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.devtask.created",
+        schemaVersion: 1,
+        source: "ui:web",
+        occurredAt: new Date().toISOString(),
+        payload: { spec: "Ship a widget and merge it yourself when asked." },
+      },
+    ]);
+    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    await catchUpFold(sql, coreRegistry, devFold);
+    const started = await lastRunStarted();
+    const box = boxes.get(started.sandbox)!;
+    const turn = box.run(runDirFor(started.runUid));
+    expect(turn.files["request-merge.sh"]).toContain("merge-request.json");
+
+    // The agent (on instruction) runs nc-request-merge: pr.json + marker.
+    const pr = {
+      prNumber: 9,
+      prUrl: "https://github.com/me/repo/pull/9",
+      branch: started.branch,
+      title: "Ship a widget",
+    };
+    turn.pr = pr;
+    box.mergeRequest = pr;
+    await pass();
+    const requested = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["agent.devmerge.requested"],
+      limit: 10,
+    });
+    expect(requested).toHaveLength(1);
+    // Forwarded once, not per poll.
+    await pass();
+    expect(
+      (
+        await readEvents(sql, coreRegistry, {
+          afterSeq: 0n,
+          patterns: ["agent.devmerge.requested"],
+          limit: 10,
+        })
+      ).length,
+    ).toBe(1);
+
+    // The merge lane picks it up exactly like a button press.
+    await catchUpEventReactors(sql, coreRegistry, [devMerge]);
+    await catchUpFold(sql, coreRegistry, devFold);
+    const mergeStart = await lastRunStarted();
+    const mergeBox = boxes.get(mergeStart.sandbox)!;
+    const mergeTurn = mergeBox.run(runDirFor(mergeStart.runUid));
+    expect(mergeTurn.env["DEV_PR_NUMBER"]).toBe("9");
+    mergeTurn.exitCode = 0;
+    mergeTurn.result = { mergedSha: "def456", deployed: ["personalbase-worker"] };
+    // End the feature session so the drain below settles.
+    await box.endSession(runDirFor(started.runUid));
+    for (let i = 0; i < 4; i++) {
+      await pass();
+    }
+    const task = await sql`
+      select status from dev_tasks where task_uid = ${started.taskUid}`;
+    expect(task[0]!["status"]).toBe("merged");
+    expect(box.destroyed).toBe(true);
   });
 
   test("a failed setup closes the run as failed and keeps the sandbox", async () => {

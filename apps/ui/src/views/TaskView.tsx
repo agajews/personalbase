@@ -46,13 +46,9 @@ function renderLines(raw: string): TranscriptLine[] {
         if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
           parts.push({ kind: "text", text: block.text.trim() });
         }
-        if (block.type === "tool_use") {
-          const input = JSON.stringify(block.input ?? {});
-          parts.push({
-            kind: "tool",
-            text: `⚒ ${block.name}(${input.length > 160 ? input.slice(0, 160) + "…" : input})`,
-          });
-        }
+        // tool_use blocks (the commands the agent runs) are hidden — the
+        // conversation shows what the agent says; its work shows up in the
+        // preview and the PR.
       }
       return parts;
     }

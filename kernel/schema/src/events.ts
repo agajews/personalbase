@@ -189,6 +189,17 @@ export const userDevmergeRequestedV1 = z.object({
 });
 export type UserDevmergeRequested = z.infer<typeof userDevmergeRequestedV1>;
 
+/**
+ * The agent itself asks for the merge (on the user's in-conversation
+ * instruction, via nc-request-merge). Same merge lane, same safeguards —
+ * only the requester differs.
+ */
+export const agentDevmergeRequestedV1 = z.object({
+  taskUid: z.uuid(),
+  prNumber: z.number().int().positive(),
+});
+export type AgentDevmergeRequested = z.infer<typeof agentDevmergeRequestedV1>;
+
 export const devPrMergedV1 = z.object({
   taskUid: z.uuid(),
   runUid: z.uuid(),
@@ -300,6 +311,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },
   { type: "dev.pr.opened", versions: [{ schema: devPrOpenedV1 }] },
   { type: "user.devmerge.requested", versions: [{ schema: userDevmergeRequestedV1 }] },
+  { type: "agent.devmerge.requested", versions: [{ schema: agentDevmergeRequestedV1 }] },
   { type: "dev.pr.merged", versions: [{ schema: devPrMergedV1 }] },
   { type: "dev.run.finished", versions: [{ schema: devRunFinishedV1 }] },
   { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },

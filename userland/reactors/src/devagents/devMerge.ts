@@ -26,7 +26,12 @@ export function makeDevMergeReactor(
   return {
     kind: "reactor",
     name: "dev-merge",
-    trigger: { kind: "event", consumes: ["user.devmerge.requested"] },
+    trigger: {
+      kind: "event",
+      // Two requesters, one lane: the UI button and the agent's
+      // nc-request-merge (payloads are identical).
+      consumes: ["user.devmerge.requested", "agent.devmerge.requested"],
+    },
     async run(ctx, input): Promise<ReactorResult> {
       if (input.kind === "event") {
         const request = userDevmergeRequestedV1.parse(input.event.payload);

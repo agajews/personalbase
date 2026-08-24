@@ -23,7 +23,7 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 5, // archived tasks
+  version: 6, // agent-requested merges
   consumes: [
     "user.devtask.created",
     "user.devtask.archived",
@@ -31,6 +31,7 @@ export const devFold: Fold = {
     "dev.preview.started",
     "user.devmessage.sent",
     "user.devmerge.requested",
+    "agent.devmerge.requested",
     "dev.run.started",
     "dev.transcript.appended",
     "dev.pr.opened",
@@ -162,7 +163,7 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
       on conflict (msg_uid) do nothing`;
     return;
   }
-  if (event.type === "user.devmerge.requested") {
+  if (event.type === "user.devmerge.requested" || event.type === "agent.devmerge.requested") {
     const request = userDevmergeRequestedV1.parse(event.payload);
     await tx`
       update dev_tasks set status = 'merging', updated_seq = ${seq}

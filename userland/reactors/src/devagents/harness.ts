@@ -34,6 +34,8 @@ export const devPollPayload = z.object({
   previewSeen: z.boolean().default(false),
   /** PR numbers already announced for this task (session emits mid-run). */
   prSeen: z.array(z.number().int()).default([]),
+  /** PR numbers whose agent merge request was already forwarded. */
+  mergeSeen: z.array(z.number().int()).default([]),
 });
 export type DevPollPayload = z.infer<typeof devPollPayload>;
 
@@ -145,6 +147,7 @@ export async function launchRun(
     polls: 0,
     previewSeen: false,
     prSeen: [],
+    mergeSeen: [],
   };
   return {
     events: [
@@ -248,6 +251,22 @@ export async function pollRun(
     });
     prSeen.push(prParsed.data.prNumber);
   }
+  // The agent asked for the merge lane (nc-request-merge, on the user's
+  // in-conversation instruction). Same event flow as the UI button, agent-
+  // attributed; forwarded once per PR.
+  const mergeSeen = [...payload.mergeSeen];
+  const mergeParsed = prJsonSchema.safeParse(poll.mergeRequest);
+  if (mergeParsed.success && !mergeSeen.includes(mergeParsed.data.prNumber)) {
+    events.push({
+      type: "agent.devmerge.requested",
+      schemaVersion: 1,
+      occurredAt: new Date().toISOString(),
+      causedByUid: payload.taskUid,
+      idempotencyKey: `dev:${payload.taskUid}:merge-request:${mergeParsed.data.prNumber}`,
+      payload: { taskUid: payload.taskUid, prNumber: mergeParsed.data.prNumber },
+    });
+    mergeSeen.push(mergeParsed.data.prNumber);
+  }
   let consumedBytes = 0;
   if (poll.content !== "") {
     // Cut at the last newline so stream-json lines stay whole across chunks
@@ -331,6 +350,7 @@ export async function pollRun(
           polls: payload.polls + 1,
           previewSeen,
           prSeen,
+          mergeSeen,
         },
         // Tighten the cadence while output is flowing so the conversation
         // feels live; back off when the session is quiet.

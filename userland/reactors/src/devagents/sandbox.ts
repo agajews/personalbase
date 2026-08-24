@@ -17,6 +17,8 @@ export interface SandboxPoll {
   readonly previewRunning: boolean;
   /** Parsed <runDir>/pr.json — the turn-end hook records the branch's PR here. */
   readonly pr: unknown;
+  /** Parsed /nc/merge-request.json — the agent asking for the merge lane. */
+  readonly mergeRequest: unknown;
   /** Seconds since the run last produced output (idle-close decisions). */
   readonly idleSeconds: number;
 }
@@ -190,22 +192,25 @@ class SpriteSandbox implements Sandbox {
         `echo "exit=$(cat ${runDir}/exit-code 2>/dev/null)"; ` +
           `echo "preview=$([ -f /nc/preview.json ] && echo 1)"; ` +
           `echo "idle=$(( $(date +%s) - $(stat -c %Y ${runDir}/run.log 2>/dev/null || date +%s) ))"; ` +
-          `echo "prjson=$(base64 -w0 ${runDir}/pr.json 2>/dev/null)"; true`,
+          `echo "prjson=$(base64 -w0 ${runDir}/pr.json 2>/dev/null)"; ` +
+          `echo "mergereq=$(base64 -w0 /nc/merge-request.json 2>/dev/null)"; true`,
         60_000,
       )
     ).trim();
     const exitRaw = /exit=(\S*)/.exec(state)?.[1] ?? "";
     const previewRunning = /preview=1/.test(state);
     const idleSeconds = Number(/idle=(-?\d+)/.exec(state)?.[1] ?? "0");
-    const prRaw = /prjson=(\S*)/.exec(state)?.[1] ?? "";
-    let pr: unknown = null;
-    if (prRaw !== "") {
+    const parseB64 = (key: string): unknown => {
+      const raw = new RegExp(`${key}=(\\S*)`).exec(state)?.[1] ?? "";
+      if (raw === "") return null;
       try {
-        pr = JSON.parse(Buffer.from(prRaw, "base64").toString("utf8"));
+        return JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
       } catch {
-        pr = null;
+        return null;
       }
-    }
+    };
+    const pr = parseB64("prjson");
+    const mergeRequest = parseB64("mergereq");
     if (exitRaw === "") {
       return {
         content,
@@ -214,6 +219,7 @@ class SpriteSandbox implements Sandbox {
         result: null,
         previewRunning,
         pr,
+        mergeRequest,
         idleSeconds,
       };
     }
@@ -235,6 +241,7 @@ class SpriteSandbox implements Sandbox {
       result,
       previewRunning,
       pr,
+      mergeRequest,
       idleSeconds,
     };
   }

@@ -71,6 +71,9 @@ may install a browser (\`npx playwright install chromium\`) and screenshot \
 http://127.0.0.1:5173.
 - Before committing work that should land, write /nc/pr.md: first line is the PR \
 title, the rest is the PR description (what changed, how you verified it).
+- If (and only if) the user explicitly asks you to merge/ship, run \
+\`nc-request-merge\` — it pushes, ensures the PR, and hands it to the merge lane \
+(rebase, typecheck, squash-merge, deploy). Never merge directly with gh or git.
 - Run \`pnpm typecheck\` and fix any failures before finishing a turn with commits.
 - Database-backed tests are unavailable in this sandbox; do not block on them, but \
 keep \`pnpm typecheck\` green.
@@ -128,6 +131,7 @@ if [ -n "$PNPM_PID" ]; then wait "$PNPM_PID" || true; fi
 command -v pnpm > /dev/null 2>&1 \
   || { tail -20 "$NC_RUN_DIR/pnpm-install.log" 2> /dev/null; fail "pnpm bootstrap failed"; }
 install -m 0755 "$NC_RUN_DIR/preview.sh" /nc/bin/nc-preview 2> /dev/null || true
+install -m 0755 "$NC_RUN_DIR/request-merge.sh" /nc/bin/nc-request-merge 2> /dev/null || true
 if [ ! -d /nc/repo/node_modules ]; then
   echo "[nc] installing dependencies"
   pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 \
@@ -276,6 +280,27 @@ if [ -z "\${PREVIEW_DATABASE_URL:-}" ]; then
 fi
 echo '{"port":5173}' > /nc/preview.json
 echo "preview requested — a private link appears on the user's task page within ~30s"
+`;
+
+/**
+ * Installed as \`nc-request-merge\`. Run only on the user's explicit
+ * instruction: publishes the branch (push + ensure PR), then drops the
+ * marker the poller turns into agent.devmerge.requested — the same merge
+ * lane as the UI button (rebase, typecheck, squash-merge, deploy).
+ */
+export const requestMergeScript = `#!/usr/bin/env bash
+if [ -z "\${NC_RUN_DIR:-}" ]; then
+  # Claude's shell doesn't inherit NC_RUN_DIR; the newest run dir is ours.
+  NC_RUN_DIR=$(ls -d /nc/run-* 2>/dev/null | tail -1)
+  export NC_RUN_DIR
+fi
+bash "$NC_RUN_DIR/turn-end.sh"
+if [ ! -f "$NC_RUN_DIR/pr.json" ]; then
+  echo "no PR could be created (are there commits on the branch?)"
+  exit 1
+fi
+cp "$NC_RUN_DIR/pr.json" /nc/merge-request.json
+echo "merge requested — the merge lane will rebase, typecheck, squash-merge, and deploy"
 `;
 
 export const mergeRunScript = `#!/usr/bin/env bash
