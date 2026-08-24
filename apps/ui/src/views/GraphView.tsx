@@ -18,16 +18,20 @@ import { NodePanel } from "./TagView.js";
 // the nodes it belongs to.
 //
 // The layout is a plain Fruchterman-Reingold spring simulation on a canvas —
-// a few hundred nodes is small enough to run without a layout library. It is
-// relaxed to completion before the first paint and then sits still: the graph
-// only moves when you move it, so clicking a tag never makes the map swim.
+// a few hundred nodes is small enough to run without a layout library. It runs
+// exactly twice: once before the first paint, and again if you ask for a fresh
+// one. Nothing animates. A cooling simulation is frozen by its step cap rather
+// than settled at equilibrium, so re-heating it releases that stored tension
+// through every node at once and the whole map lurches — the fix isn't a
+// gentler constant, it's not re-heating at all. Dragging therefore moves the
+// node you dragged and nothing else.
 
 // Only the ratio matters to the layout — it shapes the ellipse the graph
 // relaxes into, so the map fills a wide canvas rather than sitting in a disc.
 /** The canvas's measured size; only its ratio matters, shaping the ellipse
  *  the graph relaxes into so the map fills whatever space it is given. */
 const canvasSize = { width: 1180, height: 620 };
-/** Ticks run before the first paint, so the map arrives already settled. */
+/** Ticks run before the first paint, so the map arrives already laid out. */
 const prewarmTicks = 320;
 /** Papers fade in over this zoom range; their titles at `paperLabelZoom`. */
 const paperZoom = 1.15;
@@ -138,19 +142,23 @@ function buildLayout(graph: EntityGraph, previous: Layout | null): Layout {
     core: (k * Math.sqrt(nodes.length)) / 3,
     papers: [],
   };
-  // Relax to completion up front: the reader gets a settled map, and every
-  // later interaction starts from rest instead of mid-flight. Re-seeded
-  // layouts only need a short settle.
-  // Bound the pre-warm by total work, not tick count: a thousand-author graph
-  // must not freeze the tab while it relaxes.
-  const budget = Math.round(6e6 / Math.max((nodes.length * nodes.length) / 2, 1));
-  const full = Math.min(prewarmTicks, Math.max(60, budget));
-  const ticks = previous === null ? full : Math.round(full / 4);
-  const from = previous === null ? 1 : 0.3;
+  relax(layout, previous === null ? 1 : 0.3);
+  return layout;
+}
+
+/**
+ * Runs the simulation to a standstill, all at once. `from` is the starting
+ * temperature: a full 1 for a layout being formed, less for one being nudged.
+ * The tick count is bounded by total work rather than a constant, so a
+ * thousand-author graph doesn't freeze the tab while it relaxes.
+ */
+function relax(layout: Layout, from: number): void {
+  const n = layout.nodes.length;
+  const budget = Math.round(6e6 / Math.max((n * n) / 2, 1));
+  const ticks = Math.round(Math.min(prewarmTicks, Math.max(60, budget)) * from);
   for (let i = 0; i < ticks; i++) {
     step(layout, Math.max(0.02, from * (1 - i / ticks)));
   }
-  return layout;
 }
 
 /**
@@ -342,6 +350,30 @@ function relaxPapers(layout: Layout, ticks: number): void {
   }
 }
 
+/**
+ * Papers ride along with the node they were dragged by, each in proportion to
+ * how strongly it belongs to it. The map stays consistent with no simulation,
+ * so nothing moves that the reader didn't move.
+ */
+function shiftPapers(layout: Layout, index: number, dx: number, dy: number): void {
+  for (const p of layout.papers) {
+    const at = p.tags.indexOf(index);
+    if (at === -1) {
+      continue;
+    }
+    let total = 0;
+    for (const w of p.weights) {
+      total += w;
+    }
+    if (total === 0) {
+      continue;
+    }
+    const share = p.weights[at]! / total;
+    p.x += dx * share;
+    p.y += dy * share;
+  }
+}
+
 function attachPapers(layout: Layout, papers: readonly GraphPaper[]): void {
   layout.papers = papers.flatMap((p) => {
     const tags: number[] = [];
@@ -450,9 +482,6 @@ export function GraphView({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const layoutRef = useRef<Layout | null>(null);
   const viewRef = useRef<View>({ scale: 1, offsetX: 0, offsetY: 0 });
-  // Zero unless something disturbs the map; the simulation is otherwise at
-  // rest, which is what keeps clicking a tag from shaking the whole graph.
-  const alphaRef = useRef(0);
   const dirtyRef = useRef(true);
   const [hover, setHover] = useState<{ kind: "tag" | "paper"; id: string } | null>(null);
   const [query, setQuery] = useState("");
@@ -542,7 +571,6 @@ export function GraphView({
       framedRef.current = true;
       fit(layout, viewRef.current, canvasRef.current.clientWidth, canvasRef.current.clientHeight);
     }
-    alphaRef.current = 0;
     dirtyRef.current = true;
   }, [layout]);
 
@@ -570,14 +598,6 @@ export function GraphView({
         // The next relaxation shapes its ellipse to the space it actually has.
         canvasSize.width = width;
         canvasSize.height = height;
-      }
-      if (alphaRef.current > 0.02 && current !== null) {
-        step(current, alphaRef.current);
-        relaxPapers(current, 1);
-        alphaRef.current *= 0.94;
-        dirtyRef.current = true;
-      } else if (alphaRef.current !== 0) {
-        alphaRef.current = 0;
       }
       if (!dirtyRef.current && !resized) {
         return;
@@ -677,10 +697,11 @@ export function GraphView({
       d.moved = true;
     }
     if (d.node !== null) {
-      d.node.x += mx / view.scale;
-      d.node.y += my / view.scale;
-      // Dragging a tag re-energizes its neighbourhood so the map re-settles.
-      alphaRef.current = Math.max(alphaRef.current, 0.2);
+      const dx = mx / view.scale;
+      const dy = my / view.scale;
+      d.node.x += dx;
+      d.node.y += dy;
+      shiftPapers(layoutRef.current!, layoutRef.current!.bykey.get(d.node.key)!, dx, dy);
     } else {
       view.offsetX += mx;
       view.offsetY += my;
@@ -844,6 +865,7 @@ export function GraphView({
             )}
             <button
               className="ghost"
+              title="Run the layout again from where things are now"
               onClick={() => {
                 const current = layoutRef.current;
                 const canvas = canvasRef.current;
@@ -852,8 +874,12 @@ export function GraphView({
                 }
                 for (const n of current.nodes) {
                   n.pinned = false;
+                  n.vx = 0;
+                  n.vy = 0;
                 }
-                alphaRef.current = 0.35;
+                relax(current, 0.5);
+                seedPapers(current);
+                relaxPapers(current, 90);
                 fit(current, viewRef.current, canvas.clientWidth, canvas.clientHeight);
                 dirtyRef.current = true;
               }}
@@ -887,7 +913,7 @@ export function GraphView({
               />
               {hoveredPaper !== null && <div className="graph-tip">{hoveredPaper.title}</div>}
               <p className="graph-hint">
-                drag a node to pin it · drag the background to pan · scroll to zoom in until
+                drag a node to move it · drag the background to pan · scroll to zoom in until
                 the papers appear · click for details
               </p>
             </div>
