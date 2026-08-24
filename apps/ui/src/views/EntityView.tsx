@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, type EntityLink } from "../api.js";
 import { useCached } from "../cache.js";
-import { Abstract, ago, EntityChip, MarkButtons } from "../ui.js";
+import { Abstract, ago, EntityChip, MarkButtons, TagChips } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -114,6 +114,7 @@ export function EntityView({ id }: { id: string }) {
           ))}
         </p>
       )}
+      <TagChips tags={page.tags} />
       {identifiers.length > 0 && (
         <p className="entity-idents">
           {identifiers.map((i) => (

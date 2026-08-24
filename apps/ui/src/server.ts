@@ -28,6 +28,7 @@ import {
   personRef,
   questionsFold,
   resurfacedFold,
+  tagsFold,
   taxonomyFold,
 } from "@nc/folds";
 
@@ -43,6 +44,7 @@ const folds = [
   libraryFold,
   marksFold,
   taxonomyFold,
+  tagsFold,
   devFold,
   chatsFold,
   resurfacedFold,
@@ -526,6 +528,10 @@ app.get("/api/entity/:id", async (c) => {
     other: { entityId: l["entity_id"], kind: l["kind"], displayName: l["display_name"] },
   });
   const markRow = await sql`select mark from paper_marks where entity_id = ${id}`;
+  const tags = await sql`
+    select v.slug, v.name, v.facet, it.confidence
+    from item_tags it join tag_vocab v on v.slug = it.slug
+    where it.entity_id = ${id} order by it.confidence desc, v.name`;
   return c.json({
     entity: {
       entityId: entity["entity_id"],
@@ -533,6 +539,12 @@ app.get("/api/entity/:id", async (c) => {
       displayName: entity["display_name"],
     },
     mark: markRow[0]?.["mark"] ?? null,
+    tags: tags.map((t) => ({
+      slug: t["slug"],
+      name: t["name"],
+      facet: t["facet"],
+      confidence: Number(t["confidence"]),
+    })),
     identifiers,
     linksOut: linksOut.map(shapeLink),
     linksIn: linksIn.map(shapeLink),
@@ -915,6 +927,93 @@ app.get("/api/topics/:slug", async (c) => {
   });
 });
 
+// ---- granular tags: the tag vocabulary, the co-occurrence graph, a tag ----
+
+app.get("/api/tags", async (c) => {
+  const tags = await sql`
+    select v.slug, v.name, v.description, v.facet, v.vocab_id,
+           count(it.entity_id)::int as items
+    from tag_vocab v left join item_tags it on it.slug = v.slug
+    group by v.slug, v.name, v.description, v.facet, v.vocab_id, v.position
+    order by v.position`;
+  return c.json({
+    vocabId: tags[0]?.["vocab_id"] ?? null,
+    tagged: (await sql`select count(distinct entity_id)::int as n from item_tags`)[0]!["n"],
+    tags: tags.map((t) => ({
+      slug: t["slug"],
+      name: t["name"],
+      description: t["description"],
+      facet: t["facet"],
+      items: t["items"],
+    })),
+  });
+});
+
+// Nodes are tags, edges are the papers two tags share. `minShared` is the
+// edge floor the client sweeps to thin a hairball into a readable map.
+app.get("/api/tags/graph", async (c) => {
+  const minShared = Math.max(1, Number(c.req.query("minShared") ?? 3));
+  const nodes = await sql`
+    select v.slug, v.name, v.facet, count(it.entity_id)::int as items
+    from tag_vocab v left join item_tags it on it.slug = v.slug
+    group by v.slug, v.name, v.facet, v.position
+    having count(it.entity_id) > 0
+    order by v.position`;
+  const edges = await sql`
+    select a.slug as source, b.slug as target, count(*)::int as weight
+    from item_tags a
+    join item_tags b on b.entity_id = a.entity_id and b.slug > a.slug
+    group by a.slug, b.slug
+    having count(*) >= ${minShared}
+    order by count(*) desc
+    limit 6000`;
+  return c.json({ minShared, nodes, edges });
+});
+
+app.get("/api/tags/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  const tag = (
+    await sql`select slug, name, description, facet from tag_vocab where slug = ${slug}`
+  )[0];
+  if (tag === undefined) {
+    return c.json({ error: `no tag ${slug}` }, 404);
+  }
+  const items = await sql`
+    select it.confidence, e.entity_id, e.kind, e.display_name, p.arxiv_id, m.mark
+    from item_tags it
+    join entities e on e.entity_id = it.entity_id
+    left join papers p on p.entity_id = e.entity_id
+    left join paper_marks m on m.entity_id = e.entity_id
+    where it.slug = ${slug}
+    order by it.confidence desc, e.display_name`;
+  // Tags that most often ride along with this one — the neighbourhood the
+  // graph draws, listed for keyboard-and-link navigation.
+  const related = await sql`
+    select v.slug, v.name, count(*)::int as shared
+    from item_tags a
+    join item_tags b on b.entity_id = a.entity_id and b.slug <> a.slug
+    join tag_vocab v on v.slug = b.slug
+    where a.slug = ${slug}
+    group by v.slug, v.name
+    order by count(*) desc, v.name
+    limit 12`;
+  return c.json({
+    slug: tag["slug"],
+    name: tag["name"],
+    description: tag["description"],
+    facet: tag["facet"],
+    related,
+    items: items.map((r) => ({
+      entityId: r["entity_id"],
+      kind: r["kind"],
+      title: r["display_name"],
+      arxivId: r["arxiv_id"],
+      mark: r["mark"],
+      confidence: Number(r["confidence"]),
+    })),
+  });
+});
+
 app.get("/api/dev/runs/:uid/transcript", async (c) => {
   const uid = c.req.param("uid");
   const after = Number(c.req.query("after") ?? -1);
@@ -1025,6 +1124,18 @@ app.post("/api/jobs/classify", async (c) => {
   const jobId = await enqueueJob(
     sql,
     "reactor:taxonomy",
+    body.regenerate === true ? { regenerate: true } : {},
+  );
+  return c.json({ jobId });
+});
+
+const tagJobBody = z.object({ regenerate: z.boolean().optional() });
+
+app.post("/api/jobs/tag", async (c) => {
+  const body = tagJobBody.parse(await c.req.json());
+  const jobId = await enqueueJob(
+    sql,
+    "reactor:tagger",
     body.regenerate === true ? { regenerate: true } : {},
   );
   return c.json({ jobId });

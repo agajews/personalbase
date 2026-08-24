@@ -82,6 +82,16 @@ export {
   type GeneratedQuestion,
 } from "./questionWriter.js";
 export {
+  taggerReactor,
+  makeTaggerReactor,
+  taggerJobPayload,
+  facets,
+  type VocabFn,
+  type TagFn,
+  type VocabTag,
+  type ItemTags,
+} from "./tagger.js";
+export {
   taxonomyReactor,
   makeTaxonomyReactor,
   taxonomyJobPayload,

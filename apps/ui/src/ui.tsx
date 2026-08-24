@@ -162,6 +162,55 @@ export function hashHue(hash: string): number {
   return parseInt(hash.slice(0, 6), 16) % 360;
 }
 
+/**
+ * One hue per tag facet, in the same muted-HSL idiom as the prompt-hash chips:
+ * facet is the only categorical dimension in the tag graph, so colour carries
+ * it everywhere tags appear — chips on a paper, nodes in the graph.
+ */
+const facetHues: Record<string, number> = {
+  task: 210,
+  method: 265,
+  architecture: 22,
+  theory: 292,
+  training: 150,
+  evaluation: 45,
+  systems: 188,
+  application: 358,
+};
+
+export function facetHue(facet: string): number {
+  return facetHues[facet] ?? 0;
+}
+
+/** Tag chips on an entity page; each links into the graph focused on that tag. */
+export function TagChips({ tags }: { tags: { slug: string; name: string; facet: string }[] }) {
+  if (tags.length === 0) {
+    return null;
+  }
+  return (
+    <p className="tag-chips">
+      {tags.map((t) => {
+        const h = facetHue(t.facet);
+        return (
+          <a
+            key={t.slug}
+            className="tag-chip"
+            href={`#/graph/${encodeURIComponent(t.slug)}`}
+            title={t.facet}
+            style={{
+              color: `hsl(${h} 42% 30%)`,
+              background: `hsl(${h} 48% 94%)`,
+              borderColor: `hsl(${h} 34% 80%)`,
+            }}
+          >
+            {t.name}
+          </a>
+        );
+      })}
+    </p>
+  );
+}
+
 export function navTo(path: string): void {
   location.hash = path;
 }

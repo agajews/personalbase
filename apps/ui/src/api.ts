@@ -149,9 +149,17 @@ export interface EntityLink {
   other: { entityId: string; kind: string; displayName: string | null };
 }
 
+export interface ItemTag {
+  slug: string;
+  name: string;
+  facet: string;
+  confidence: number;
+}
+
 export interface EntityPage {
   entity: { entityId: string; kind: string; displayName: string | null };
   mark: Mark | null;
+  tags: ItemTag[];
   identifiers: { scheme: string; value: string }[];
   linksOut: EntityLink[];
   linksIn: EntityLink[];
@@ -234,6 +242,36 @@ export interface TopicItems {
   slug: string;
   name: string;
   description: string;
+  items: {
+    entityId: string;
+    kind: string;
+    title: string | null;
+    arxivId: string | null;
+    mark: Mark | null;
+    confidence: number;
+  }[];
+}
+
+export interface TagSummary {
+  slug: string;
+  name: string;
+  description: string;
+  facet: string;
+  items: number;
+}
+
+export interface TagGraph {
+  minShared: number;
+  nodes: { slug: string; name: string; facet: string; items: number }[];
+  edges: { source: string; target: string; weight: number }[];
+}
+
+export interface TagPage {
+  slug: string;
+  name: string;
+  description: string;
+  facet: string;
+  related: { slug: string; name: string; shared: number }[];
   items: {
     entityId: string;
     kind: string;
@@ -369,6 +407,13 @@ export const api = {
     request(`/api/topics/${encodeURIComponent(slug)}`),
   classify: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
+  tags: (): Promise<{ vocabId: string | null; tagged: number; tags: TagSummary[] }> =>
+    request("/api/tags"),
+  tagGraph: (minShared: number): Promise<TagGraph> =>
+    request(`/api/tags/graph?minShared=${minShared}`),
+  tag: (slug: string): Promise<TagPage> => request(`/api/tags/${encodeURIComponent(slug)}`),
+  runTagger: (regenerate: boolean): Promise<{ jobId: string }> =>
+    post("/api/jobs/tag", { regenerate }) as Promise<{ jobId: string }>,
   chats: (): Promise<{ chats: ChatSummary[] }> => request("/api/chats"),
   chatTurns: (chatUid: string): Promise<{ turns: ChatTurn[]; question: ChatQuestion | null }> =>
     request(`/api/chats/${encodeURIComponent(chatUid)}`),

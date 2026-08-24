@@ -11,6 +11,7 @@ import { PapersView } from "./views/PapersView.js";
 import { AgentsView } from "./views/AgentsView.js";
 import { TaskView } from "./views/TaskView.js";
 import { TopicsView } from "./views/TopicsView.js";
+import { GraphView } from "./views/GraphView.js";
 import { ChatView } from "./views/ChatView.js";
 
 type Route =
@@ -24,6 +25,7 @@ type Route =
   | { kind: "agents" }
   | { kind: "task"; uid: string }
   | { kind: "topics"; slug: string | null }
+  | { kind: "graph"; slug: string | null }
   | { kind: "chat"; uid: string | null }
   | { kind: "tables"; table: string | null };
 
@@ -58,6 +60,11 @@ function parseRoute(hash: string): Route {
       return {
         kind: "chat",
         uid: parts[1] !== undefined && parts[1] !== "" ? parts[1] : null,
+      };
+    case "graph":
+      return {
+        kind: "graph",
+        slug: parts[1] !== undefined && parts[1] !== "" ? decodeURIComponent(parts[1]) : null,
       };
     case "topics":
       return {
@@ -198,6 +205,12 @@ export function App() {
             <span className="filter-name">Topics</span>
           </button>
           <button
+            className={`filter-item ${route.kind === "graph" ? "active" : ""}`}
+            onClick={() => navTo("/graph")}
+          >
+            <span className="filter-name">Tag graph</span>
+          </button>
+          <button
             className={`filter-item today ${route.kind === "agents" || route.kind === "task" ? "active" : ""}`}
             onClick={() => navTo("/agents")}
           >
@@ -233,7 +246,7 @@ export function App() {
           </button>
         </aside>
 
-        <main>
+        <main className={route.kind === "graph" ? "wide" : ""}>
           {route.kind === "feed" && state !== null && <FeedView filters={state.filters} />}
           {(route.kind === "filter" || route.kind === "filter-new") && state !== null && (
             <FilterView
@@ -252,6 +265,7 @@ export function App() {
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
+          {route.kind === "graph" && <GraphView slug={route.slug} state={state} />}
           {route.kind === "chat" && <ChatView key="chat" uid={route.uid} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
