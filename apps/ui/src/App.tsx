@@ -24,7 +24,7 @@ type Route =
   | { kind: "agents" }
   | { kind: "task"; uid: string }
   | { kind: "topics"; slug: string | null }
-  | { kind: "chat" }
+  | { kind: "chat"; uid: string | null }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -55,7 +55,10 @@ function parseRoute(hash: string): Route {
         ? { kind: "task", uid: parts[1] }
         : { kind: "agents" };
     case "chat":
-      return { kind: "chat" };
+      return {
+        kind: "chat",
+        uid: parts[1] !== undefined && parts[1] !== "" ? parts[1] : null,
+      };
     case "topics":
       return {
         kind: "topics",
@@ -154,11 +157,28 @@ export function App() {
             <span className="filter-name">Today</span>
           </button>
           <button
-            className={`filter-item ${route.kind === "chat" ? "active" : ""}`}
+            className={`filter-item ${route.kind === "chat" && route.uid === null ? "active" : ""}`}
             onClick={() => navTo("/chat")}
           >
-            <span className="filter-name">Chat</span>
+            <span className="filter-name">New chat</span>
           </button>
+          {state !== undefined && state !== null && state.chats.length > 0 && (
+            <>
+              <div className="rail-label">Chats</div>
+              <nav>
+                {state.chats.map((ch) => (
+                  <button
+                    key={ch.chatUid}
+                    className={`filter-item chat-item ${route.kind === "chat" && route.uid === ch.chatUid ? "active" : ""}`}
+                    onClick={() => navTo(`/chat/${ch.chatUid}`)}
+                    title={ch.title}
+                  >
+                    <span className="filter-name chat-title">{ch.title}</span>
+                  </button>
+                ))}
+              </nav>
+            </>
+          )}
           <button
             className={`filter-item ${route.kind === "marked" && route.mark === "want_to_read" ? "active" : ""}`}
             onClick={() => navTo("/want-to-read")}
@@ -249,7 +269,7 @@ export function App() {
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
-          {route.kind === "chat" && <ChatView />}
+          {route.kind === "chat" && <ChatView key="chat" uid={route.uid} />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

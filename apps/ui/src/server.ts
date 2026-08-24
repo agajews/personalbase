@@ -14,8 +14,8 @@ import {
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
 import { catchUpFolds, enqueueJob } from "@nc/process";
-import { runChat } from "./chat.js";
-import type Anthropic from "@anthropic-ai/sdk";
+import { streamSSE } from "hono/streaming";
+import { streamChat } from "./chat.js";
 import {
   entityId,
   filterResultsFold,
@@ -23,6 +23,7 @@ import {
   graphFold,
   libraryFold,
   devFold,
+  chatsFold,
   marksFold,
   papersFold,
   paperRef,
@@ -43,6 +44,7 @@ const folds = [
   marksFold,
   taxonomyFold,
   devFold,
+  chatsFold,
 ];
 
 if (existsSync(".env")) {
@@ -155,7 +157,14 @@ app.get("/api/state", async (c) => {
     select seq, type, source, occurred_at from events order by seq desc limit 10`;
   const markCounts = await sql`
     select mark, count(*)::int as n from paper_marks group by mark`;
+  const chats = await sql`
+    select chat_uid, title, last_at from chats order by last_at desc limit 15`;
   return c.json({
+    chats: chats.map((ch) => ({
+      chatUid: ch["chat_uid"],
+      title: ch["title"],
+      lastAt: ch["last_at"],
+    })),
     marks: {
       saved: markCounts.find((m) => m["mark"] === "saved")?.["n"] ?? 0,
       wantToRead: markCounts.find((m) => m["mark"] === "want_to_read")?.["n"] ?? 0,
@@ -927,22 +936,45 @@ app.post("/api/jobs/labs", async (c) => {
   return c.json({ jobId });
 });
 
-// The operator chat: Opus with read-only SQL plus event/job agency. The
-// transcript is opaque to the client (full content blocks round-trip so tool
-// context and thinking survive across turns).
-const chatBody = z.object({
-  transcript: z.array(z.unknown()).default([]),
+// The operator chat: Opus with read-only SQL plus event/job agency.
+// Conversations are events (user.chat.message_sent / agent.chat.replied)
+// folded into chats/chat_turns; each turn streams over SSE.
+const chatStreamBody = z.object({
+  chatUid: z.string().uuid(),
   message: z.string().min(1),
 });
 
-app.post("/api/chat", async (c) => {
-  const body = chatBody.parse(await c.req.json());
-  const transcript: Anthropic.MessageParam[] = [
-    ...(body.transcript as Anthropic.MessageParam[]),
-    { role: "user", content: body.message },
-  ];
-  const result = await runChat(sql, transcript);
-  return c.json(result);
+app.post("/api/chat/stream", async (c) => {
+  const body = chatStreamBody.parse(await c.req.json());
+  return streamSSE(c, async (stream) => {
+    try {
+      await streamChat(sql, body.chatUid, body.message, async (event) => {
+        await stream.writeSSE({ data: JSON.stringify(event) });
+      });
+    } catch (error) {
+      console.error(error);
+      await stream.writeSSE({
+        data: JSON.stringify({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      });
+    }
+  });
+});
+
+app.get("/api/chats/:uid", async (c) => {
+  const uid = c.req.param("uid");
+  const turns = await sql`
+    select role, text, trace from chat_turns
+    where chat_uid = ${uid} order by event_seq`;
+  return c.json({
+    turns: turns.map((t) => ({
+      role: t["role"],
+      text: t["text"],
+      trace: t["trace"] ?? [],
+    })),
+  });
 });
 
 app.onError((error, c) => {
