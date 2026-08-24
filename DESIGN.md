@@ -465,7 +465,7 @@ Notes that matter:
 - **Serialized by construction**: merge runs go through the same serial dispatcher, so two approvals can't race a deploy.
 - **Self-update is safe**: the merge deploy restarts the very worker that babysits the merge run. The sandbox keeps running detached; the restarted daemon requeues `running` jobs and the poll chain resumes — all state lives in the database, none in the process.
 - **Human gate first**: nothing merges without a `user.devmerge.requested` event. Auto-merge later is one reactor-trigger change, not a redesign.
-- Trunk is configurable (`DEV_TRUNK`, currently `worktree-claude`); moving to a protected `main` is an ops decision, not a code change.
+- Trunk is configurable (`DEV_TRUNK`); the canonical trunk is `main` — agent PRs target it and the merge agent deploys from it.
 
 ### 10.3 Trust boundaries
 

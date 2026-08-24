@@ -27,7 +27,7 @@ export function devConfigFromEnv(): DevConfig {
   };
   return {
     repo: process.env["DEV_REPO"] ?? "agajews/personalbase",
-    trunk: process.env["DEV_TRUNK"] ?? "worktree-claude",
+    trunk: process.env["DEV_TRUNK"] ?? "main",
     githubToken: require("GITHUB_TOKEN"),
     anthropicApiKey: require("ANTHROPIC_API_KEY"),
     // Only the merge lane passes these into a sandbox.
