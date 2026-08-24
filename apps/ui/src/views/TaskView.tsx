@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DevRun, type DevTaskPage } from "../api.js";
-import { ago } from "../ui.js";
+import { ago, runDuration } from "../ui.js";
 import { DevStatusChip } from "./AgentsView.js";
 
 interface TranscriptLine {
@@ -205,6 +205,9 @@ export function TaskView({ uid }: { uid: string }) {
           <div className="run-facts">
             <span>
               {run.kind} run in <code>{run.sandbox}</code>
+            </span>
+            <span title={run.finishedAt === null ? "running for" : "run took"}>
+              {runDuration(run.startedAt, run.finishedAt)}
             </span>
             {run.branch !== null && <code>{run.branch}</code>}
             {run.error !== null && <span className="dev-task-error">{run.error}</span>}

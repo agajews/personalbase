@@ -316,6 +316,8 @@ export interface DevRunSummary {
   prUrl: string | null;
   summary: string | null;
   error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 export interface DevTaskListItem {

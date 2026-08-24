@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type DevTaskListItem } from "../api.js";
-import { ago, navTo } from "../ui.js";
+import { ago, navTo, runDuration } from "../ui.js";
 
 const statusLabel: Record<string, string> = {
   queued: "queued",
@@ -92,6 +92,11 @@ export function AgentsView() {
               )}
               {t.latestRun?.summary !== null && t.latestRun?.summary !== undefined && (
                 <span>{t.latestRun.summary}</span>
+              )}
+              {t.latestRun != null && (
+                <span title={t.latestRun.finishedAt === null ? "running for" : "run took"}>
+                  {runDuration(t.latestRun.startedAt, t.latestRun.finishedAt)}
+                </span>
               )}
               <span>{ago(t.createdAt)}</span>
             </span>
