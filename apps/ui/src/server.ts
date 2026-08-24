@@ -1061,6 +1061,17 @@ app.onError((error, c) => {
 
 // Static frontend (built by `vite build`); paths are cwd-relative, so run
 // from the repo root (`pnpm ui`).
+// Cache policy: the HTML shell must always revalidate (otherwise browsers
+// heuristically cache it and keep loading old hashed bundles after deploys);
+// the hashed assets themselves are immutable.
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.path.startsWith("/assets/")) {
+    c.res.headers.set("cache-control", "public, max-age=31536000, immutable");
+  } else if (c.res.headers.get("content-type")?.includes("text/html") === true) {
+    c.res.headers.set("cache-control", "no-cache");
+  }
+});
 app.use("*", serveStatic({ root: "./apps/ui/dist" }));
 app.get("*", serveStatic({ path: "./apps/ui/dist/index.html" }));
 
