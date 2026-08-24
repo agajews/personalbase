@@ -100,7 +100,10 @@ else
   cd /nc/repo
   git checkout -q "$DEV_BRANCH" || fail "branch checkout failed"
 fi
-command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
+if ! command -v pnpm > /dev/null 2>&1; then
+  echo "[nc] bootstrapping pnpm (slow the first time)"
+  npm install -g pnpm --force > /dev/null 2>&1
+fi
 install -m 0755 "$NC_RUN_DIR/preview.sh" /nc/bin/nc-preview 2> /dev/null || true
 if [ ! -d /nc/repo/node_modules ]; then
   echo "[nc] installing dependencies"
@@ -190,37 +193,18 @@ finish(data);
 `;
 
 /**
- * Installed as \`nc-preview\` in the sandbox. Starts (or restarts) the app's
- * dev servers against the read-only preview database; the poller notices
- * /nc/preview.json and surfaces the sandbox's SSO-gated URL on the task page.
- * Idempotent; vite hot-reloads edits without a rerun.
+ * Installed as \`nc-preview\` in the sandbox. Just requests the preview: the
+ * harness registers the dev servers as supervised sandbox services (the
+ * sandbox URL proxies to a service's httpPort — loose processes are not
+ * routable) and the link appears on the user's task page.
  */
 export const previewScript = `#!/usr/bin/env bash
-cd /nc/repo || { echo "no /nc/repo"; exit 1; }
 if [ -z "\${PREVIEW_DATABASE_URL:-}" ]; then
   echo "PREVIEW_DATABASE_URL is not set; previews are disabled"
   exit 1
 fi
-pkill -f 'tsx apps/ui/src/server.ts' > /dev/null 2>&1
-pkill -f vite > /dev/null 2>&1
-sleep 1
-setsid bash -c 'cd /nc/repo && DATABASE_URL="$PREVIEW_DATABASE_URL" NC_PREVIEW=1 \
-HOST=127.0.0.1 PORT=4680 pnpm exec tsx apps/ui/src/server.ts > /nc/preview-api.log 2>&1' \
-  < /dev/null > /dev/null 2>&1 &
-setsid bash -c 'cd /nc/repo && pnpm --filter @nc/ui exec vite --host 0.0.0.0 --port 5173 \
-> /nc/preview-vite.log 2>&1' < /dev/null > /dev/null 2>&1 &
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 2
-  curl -s -o /dev/null http://127.0.0.1:5173/ && break
-done
-if ! curl -s -o /dev/null http://127.0.0.1:5173/; then
-  echo "preview failed to start:"
-  tail -5 /nc/preview-vite.log /nc/preview-api.log 2>/dev/null
-  rm -f /nc/preview.json
-  exit 1
-fi
 echo '{"port":5173}' > /nc/preview.json
-echo "preview running — a private link appears on the user's task page"
+echo "preview requested — a private link appears on the user's task page within ~30s"
 `;
 
 export const mergeRunScript = `#!/usr/bin/env bash
@@ -244,7 +228,10 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 mkdir -p /nc/bin
 corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
 export PATH="/nc/bin:$HOME/.local/bin:$PATH"
-command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
+if ! command -v pnpm > /dev/null 2>&1; then
+  echo "[nc] bootstrapping pnpm (slow the first time)"
+  npm install -g pnpm --force > /dev/null 2>&1
+fi
 pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 || pnpm install > "$NC_RUN_DIR/install.log" 2>&1 \
   || { tail -20 "$NC_RUN_DIR/install.log"; echo '{"error":"pnpm install failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] typechecking the rebased PR"

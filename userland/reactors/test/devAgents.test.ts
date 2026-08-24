@@ -31,11 +31,16 @@ class FakeSandbox implements Sandbox {
   runs = new Map<string, FakeRun>();
   destroyed = false;
   previewRunning = false;
+  previewStartedWith: string | null = null;
 
   constructor(readonly name: string) {}
 
   async url(): Promise<string | null> {
     return `https://${this.name}.sprites.app`;
+  }
+
+  async startPreview(previewDatabaseUrl: string): Promise<void> {
+    this.previewStartedWith = previewDatabaseUrl;
   }
 
   async start(
@@ -189,6 +194,8 @@ describe("dev-agent flow", () => {
     expect((previews[0]!.payload as { url: string }).url).toBe(
       `https://${payload.sandbox}.sprites.app`,
     );
+    // The preview runs as supervised services with the read-only credentials.
+    expect(box.previewStartedWith).toBe("postgres://readonly@example/db");
     // Later polls do not re-emit it.
     expect(await duePolls()).toBe(1);
     expect(

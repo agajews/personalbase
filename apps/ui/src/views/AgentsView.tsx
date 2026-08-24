@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useCached } from "../cache.js";
-import { ago, navTo, runDuration } from "../ui.js";
+import { ago, BusyButton, navTo, runDuration } from "../ui.js";
 
 const statusLabel: Record<string, string> = {
   queued: "queued",
@@ -30,10 +30,13 @@ export function AgentsView() {
   const submit = async () => {
     if (spec.trim() === "") return;
     try {
-      await api.createDevTask(spec.trim());
+      const { taskUid } = await api.createDevTask(spec.trim());
       setSpec("");
       setSubmitError(null);
       refresh();
+      // Land on the task page, where the status chip and transcript make
+      // progress visible immediately.
+      navTo(`/task/${taskUid}`);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
     }
@@ -55,9 +58,9 @@ export function AgentsView() {
           rows={5}
           placeholder="What should the agent build? Be specific about behavior and where it lives. A title is generated for you."
         />
-        <button onClick={() => void submit()} disabled={spec.trim() === ""}>
+        <BusyButton onClick={submit} disabled={spec.trim() === ""}>
           Start agent
-        </button>
+        </BusyButton>
       </div>
       {error !== null && <div className="error">{error}</div>}
       {tasks === null && <div className="empty">loading…</div>}

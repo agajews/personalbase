@@ -372,8 +372,8 @@ export const api = {
     request(`/api/dev/tasks/${encodeURIComponent(uid)}`),
   devTranscript: (runUid: string, after: number): Promise<{ chunks: TranscriptChunk[] }> =>
     request(`/api/dev/runs/${encodeURIComponent(runUid)}/transcript?after=${after}`),
-  createDevTask: (spec: string): Promise<unknown> =>
-    post("/api/dev/tasks", { spec }),
+  createDevTask: (spec: string): Promise<{ taskUid: string }> =>
+    post("/api/dev/tasks", { spec }) as Promise<{ taskUid: string }>,
   requestMerge: (taskUid: string, prNumber: number): Promise<unknown> =>
     post("/api/dev/merge", { taskUid, prNumber }),
   sendDevMessage: (taskUid: string, message: string): Promise<unknown> =>
@@ -417,6 +417,12 @@ export interface DevRun {
   finishedAt: string | null;
 }
 
+export interface DevMessage {
+  msgUid: string;
+  message: string;
+  at: string;
+}
+
 export interface DevTaskPage {
   task: {
     taskUid: string;
@@ -426,6 +432,7 @@ export interface DevTaskPage {
     previewUrl: string | null;
     createdAt: string;
   };
+  messages: DevMessage[];
   runs: DevRun[];
 }
 

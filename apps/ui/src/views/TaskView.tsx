@@ -170,6 +170,14 @@ export function TaskView({ uid }: { uid: string }) {
   // The agent's session survives between turns, so the conversation is open
   // whenever the task hasn't merged.
   const conversable = ["running", "pr_open", "failed"].includes(page.task.status);
+  // Messages newer than the latest turn haven't been picked up yet: show them
+  // as queued so a sent message is never invisibly in limbo.
+  const latestFeatureStart = page.runs
+    .filter((r) => r.kind === "feature")
+    .reduce((max, r) => Math.max(max, new Date(r.startedAt).getTime()), 0);
+  const queued = page.messages.filter(
+    (m) => new Date(m.at).getTime() > latestFeatureStart,
+  );
   const send = async () => {
     if (message.trim() === "") return;
     try {
@@ -248,6 +256,19 @@ export function TaskView({ uid }: { uid: string }) {
         </>
       )}
       {run === null && <div className="empty">No runs yet — the worker picks this up within seconds.</div>}
+      {queued.length > 0 && (
+        <div className="dev-queued">
+          {queued.map((m) => (
+            <div key={m.msgUid} className="dev-queued-msg">
+              <span className="dev-queued-label">queued {ago(m.at)}</span>
+              <span>{m.message}</span>
+            </div>
+          ))}
+          <div className="dev-composer-hint">
+            The agent picks these up when its current turn finishes.
+          </div>
+        </div>
+      )}
       {conversable && (
         <div className="dev-composer">
           <textarea

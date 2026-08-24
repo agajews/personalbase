@@ -7,6 +7,7 @@ import {
   devTaskTitledV1,
   devTranscriptAppendedV1,
   userDevmergeRequestedV1,
+  userDevmessageSentV1,
   userDevtaskCreatedV1,
 } from "@nc/schema";
 import type { Fold } from "@nc/process";
@@ -21,11 +22,12 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 3, // live previews: dev.preview.started -> dev_tasks.preview_url
+  version: 4, // dev_messages: queued follow-ups are visible before their turn
   consumes: [
     "user.devtask.created",
     "dev.task.titled",
     "dev.preview.started",
+    "user.devmessage.sent",
     "user.devmerge.requested",
     "dev.run.started",
     "dev.transcript.appended",
@@ -33,7 +35,7 @@ export const devFold: Fold = {
     "dev.pr.merged",
     "dev.run.finished",
   ],
-  tables: ["dev_tasks", "dev_runs", "dev_transcript_chunks"],
+  tables: ["dev_tasks", "dev_runs", "dev_transcript_chunks", "dev_messages"],
   async init(tx) {
     await tx`
       create table dev_tasks (
@@ -63,6 +65,14 @@ export const devFold: Fold = {
         finished_at timestamptz
       )`;
     await tx`create index dev_runs_task on dev_runs (task_uid, started_at)`;
+    await tx`
+      create table dev_messages (
+        msg_uid  uuid primary key,        -- event_uid of user.devmessage.sent
+        task_uid uuid not null,
+        message  text not null,
+        at       timestamptz not null
+      )`;
+    await tx`create index dev_messages_task on dev_messages (task_uid, at)`;
     await tx`
       create table dev_transcript_chunks (
         run_uid   uuid not null,
@@ -133,6 +143,14 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
     await tx`
       update dev_tasks set preview_url = ${preview.url}, updated_seq = ${seq}
       where task_uid = ${preview.taskUid}`;
+    return;
+  }
+  if (event.type === "user.devmessage.sent") {
+    const message = userDevmessageSentV1.parse(event.payload);
+    await tx`
+      insert into dev_messages (msg_uid, task_uid, message, at)
+      values (${event.eventUid}, ${message.taskUid}, ${message.message}, ${at})
+      on conflict (msg_uid) do nothing`;
     return;
   }
   if (event.type === "user.devmerge.requested") {

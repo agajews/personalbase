@@ -202,7 +202,10 @@ export function makeDevAgentReactor(
           "dev-agent",
           payload,
           (result) => prEvents(payload, result),
-          { destroySandboxOnSuccess: false },
+          {
+            destroySandboxOnSuccess: false,
+            previewDatabaseUrl: config().previewDatabaseUrl,
+          },
         );
       }
 

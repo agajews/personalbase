@@ -818,6 +818,9 @@ app.get("/api/dev/tasks/:uid", async (c) => {
            merged_sha, summary, error, started_at, finished_at
     from dev_runs where task_uid = ${uid}
     order by started_at`;
+  const messages = await sql`
+    select msg_uid, message, at from dev_messages
+    where task_uid = ${uid} order by at`;
   return c.json({
     task: {
       taskUid: task["task_uid"],
@@ -827,6 +830,11 @@ app.get("/api/dev/tasks/:uid", async (c) => {
       previewUrl: task["preview_url"],
       createdAt: task["created_at"],
     },
+    messages: messages.map((m) => ({
+      msgUid: m["msg_uid"],
+      message: m["message"],
+      at: m["at"],
+    })),
     runs: runs.map((r) => ({
       runUid: r["run_uid"],
       kind: r["kind"],
@@ -940,7 +948,12 @@ app.post("/api/dev/tasks", async (c) => {
     },
   ]);
   await catchUpFolds(sql, coreRegistry, folds);
-  return c.json({ ok: true });
+  // The task's uid is its event's uid — return it so the UI can land the
+  // user on the task page immediately.
+  const created = await sql`
+    select event_uid from events where type = 'user.devtask.created'
+    order by seq desc limit 1`;
+  return c.json({ taskUid: created[0]!["event_uid"] });
 });
 
 const devMessageBody = z.object({

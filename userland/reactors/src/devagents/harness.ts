@@ -173,7 +173,10 @@ export async function pollRun(
   reactorName: string,
   payload: DevPollPayload,
   onExit: (result: unknown) => { events: ReactorEvent[]; summary: string | null },
-  options: { readonly destroySandboxOnSuccess: boolean } = { destroySandboxOnSuccess: true },
+  options: {
+    readonly destroySandboxOnSuccess: boolean;
+    readonly previewDatabaseUrl?: string;
+  } = { destroySandboxOnSuccess: true },
 ): Promise<ReactorOutput> {
   const sandbox = provider.open(payload.sandbox);
   let poll: SandboxPoll;
@@ -186,21 +189,27 @@ export async function pollRun(
   }
 
   const events: ReactorEvent[] = [];
-  // First sighting of the preview marker: surface the sandbox's SSO-gated
-  // URL as a fact (once per task; the idempotency key dedups retries).
+  // First sighting of the preview marker: register the preview as supervised
+  // sandbox services (the URL proxy routes to a service's httpPort), then
+  // surface the SSO-gated URL as a fact. Failures retry on the next poll.
   let previewSeen = payload.previewSeen;
-  if (poll.previewRunning && !previewSeen) {
-    const url = await sandbox.url();
-    if (url !== null) {
-      events.push({
-        type: "dev.preview.started",
-        schemaVersion: 1,
-        occurredAt: new Date().toISOString(),
-        causedByUid: payload.taskUid,
-        idempotencyKey: `dev:${payload.taskUid}:preview:${payload.sandbox}`,
-        payload: { taskUid: payload.taskUid, runUid: payload.runUid, url },
-      });
-      previewSeen = true;
+  if (poll.previewRunning && !previewSeen && options.previewDatabaseUrl !== undefined) {
+    try {
+      await sandbox.startPreview(options.previewDatabaseUrl);
+      const url = await sandbox.url();
+      if (url !== null) {
+        events.push({
+          type: "dev.preview.started",
+          schemaVersion: 1,
+          occurredAt: new Date().toISOString(),
+          causedByUid: payload.taskUid,
+          idempotencyKey: `dev:${payload.taskUid}:preview:${payload.sandbox}`,
+          payload: { taskUid: payload.taskUid, runUid: payload.runUid, url },
+        });
+        previewSeen = true;
+      }
+    } catch {
+      // service registration hiccup; retried next poll
     }
   }
   let consumedBytes = 0;

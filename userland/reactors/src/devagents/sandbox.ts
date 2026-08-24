@@ -32,6 +32,11 @@ export interface Sandbox {
   poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll>;
   /** The sandbox's SSO-gated HTTPS URL (null until known). */
   url(): Promise<string | null>;
+  /**
+   * Registers the preview as supervised sandbox services (API on loopback,
+   * vite with httpPort so the sandbox URL proxies to it). Idempotent.
+   */
+  startPreview(previewDatabaseUrl: string): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -163,6 +168,40 @@ class SpriteSandbox implements Sandbox {
   async url(): Promise<string | null> {
     const fetched = await spritesClient().getSprite(this.name);
     return fetched.url ?? null;
+  }
+
+  async startPreview(previewDatabaseUrl: string): Promise<void> {
+    const sprite = await this.handle();
+    const services = await sprite.listServices();
+    const have = new Set(services.map((s) => s.name));
+    const env = {
+      PATH: "/nc/bin:/root/.local/bin:/home/sprite/.local/bin:/usr/local/bin:/usr/bin:/bin",
+    };
+    if (!have.has("preview-api")) {
+      await sprite.createService("preview-api", {
+        cmd: "bash",
+        args: ["-c", "pnpm exec tsx apps/ui/src/server.ts"],
+        dir: "/nc/repo",
+        env: {
+          ...env,
+          DATABASE_URL: previewDatabaseUrl,
+          NC_PREVIEW: "1",
+          HOST: "127.0.0.1",
+          PORT: "4680",
+        },
+      });
+    }
+    if (!have.has("preview-vite")) {
+      await sprite.createService("preview-vite", {
+        cmd: "bash",
+        args: ["-c", "pnpm --filter @nc/ui exec vite --host 0.0.0.0 --port 5173"],
+        dir: "/nc/repo",
+        env,
+        needs: ["preview-api"],
+        // This is what the sandbox's HTTPS URL proxies to.
+        httpPort: 5173,
+      });
+    }
   }
 
   async destroy(): Promise<void> {
