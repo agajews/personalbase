@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DevRun, type DevTaskPage } from "../api.js";
-import { ago, runDuration } from "../ui.js";
+import { ago, cmdEnter, runDuration } from "../ui.js";
 import { DevStatusChip } from "./AgentsView.js";
 
 interface TranscriptLine {
@@ -297,9 +297,7 @@ export function TaskView({ uid }: { uid: string }) {
             }}
             rows={2}
             placeholder="Send the agent a follow-up or clarification — it resumes the same session on the same branch."
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(false);
-            }}
+            onKeyDown={cmdEnter(() => void send(false))}
           />
           <div className="dev-composer-row">
             <button onClick={() => void send(false)} disabled={message.trim() === ""}>

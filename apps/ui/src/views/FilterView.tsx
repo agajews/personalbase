@@ -12,6 +12,7 @@ import {
   AuthorsLine,
   BusyButton,
   CategoryChips,
+  cmdEnter,
   EntityChip,
   HashChip,
   hashHue,
@@ -183,7 +184,14 @@ export function FilterView({
         <textarea
           value={draft.prompt}
           onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
-          placeholder="Describe what you want surfaced — the judge reads titles and abstracts against this."
+          onKeyDown={cmdEnter(() => {
+            if (draft.prompt === "" || (creating ? draft.name === "" : !draftChanged)) return;
+            void act(async () => {
+              await api.saveFilter(draft);
+              onSaved(draft.name);
+            });
+          })}
+          placeholder="Describe what you want surfaced — the judge reads titles and abstracts against this. ⌘⏎ to save."
           rows={5}
         />
         <div className="editor-foot">

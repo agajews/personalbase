@@ -1,5 +1,5 @@
 // Shared presentational bits and navigation helpers.
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { api, type Mark } from "./api.js";
 
 /**
@@ -158,6 +158,22 @@ export function AuthorsLine({
       ))}
     </p>
   );
+}
+
+/**
+ * ⌘/Ctrl-Enter submits from inside a textarea (plain Enter keeps newlines) —
+ * the site-wide keyboard convention for multi-line inputs with one primary
+ * action.
+ */
+export function cmdEnter(
+  submit: () => void,
+): (e: KeyboardEvent<HTMLTextAreaElement>) => void {
+  return (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit();
+    }
+  };
 }
 
 export function ago(iso: string | null): string {

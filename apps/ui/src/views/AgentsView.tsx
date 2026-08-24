@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useCached } from "../cache.js";
-import { ago, BusyButton, navTo, runDuration } from "../ui.js";
+import { ago, BusyButton, cmdEnter, navTo, runDuration } from "../ui.js";
 
 const statusLabel: Record<string, string> = {
   queued: "queued",
@@ -56,8 +56,9 @@ export function AgentsView() {
         <textarea
           value={spec}
           onChange={(e) => setSpec(e.target.value)}
+          onKeyDown={cmdEnter(() => void submit())}
           rows={5}
-          placeholder="What should the agent build? Be specific about behavior and where it lives. A title is generated for you."
+          placeholder="What should the agent build? Be specific about behavior and where it lives. A title is generated for you. ⌘⏎ to start."
         />
         <BusyButton onClick={submit} disabled={spec.trim() === ""}>
           Start agent
