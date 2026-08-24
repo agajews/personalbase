@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, type EntityLink } from "../api.js";
 import { useCached } from "../cache.js";
-import { ago, EntityChip, MarkButtons } from "../ui.js";
+import { Abstract, ago, EntityChip, MarkButtons } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -137,7 +137,7 @@ export function EntityView({ id }: { id: string }) {
           <p className="verdict-authors">
             {(paper.authors as string[]).join(", ")} · {paper.categories.join(", ")}
           </p>
-          <p className="verdict-abstract">{paper.abstract}</p>
+          <Abstract text={paper.abstract} />
           <p className="run-fact">
             published {new Date(paper.published_at).toISOString().slice(0, 10)} · ingested{" "}
             {ago(paper.ingested_at)}

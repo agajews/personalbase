@@ -1,5 +1,6 @@
 // Shared presentational bits and navigation helpers.
-import { useState, type KeyboardEvent } from "react";
+import katex from "katex";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
@@ -17,6 +18,52 @@ export function MathMarkdown({ children }: { children: string }) {
       {children}
     </Markdown>
   );
+}
+
+/**
+ * TeX inside otherwise plain prose: $$…$$ and \[…\] display, $…$ and \(…\)
+ * inline. An inline $ pair must hug its contents (`$x$`, never `$5 and $9`)
+ * so prices and lone dollar signs stay prose.
+ */
+const texSegment =
+  /\$\$([\s\S]+?)\$\$|(?<!\\)\$(?!\s)([^$]*[^$\s\\])\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
+
+const unicodeMacro = (tex: string): string =>
+  tex.replace(/\\unicode\{x([0-9a-f]+)\}/gi, (_, hex: string) =>
+    `\\text{${String.fromCodePoint(parseInt(hex, 16))}}`,
+  );
+
+/**
+ * A paper abstract: arXiv gives it to us as plain text carrying TeX, so the
+ * math renders and everything else stays exactly as written. Markdown is the
+ * wrong tool here — an abstract's stray underscores and asterisks are text,
+ * not markup.
+ */
+export function Abstract({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  let prose = 0;
+  for (const m of text.matchAll(texSegment)) {
+    const at = m.index;
+    const tex = m[1] ?? m[2] ?? m[3] ?? m[4] ?? "";
+    let html: string;
+    try {
+      // \unicode{x2014} is arXiv's favourite macro and KaTeX has never heard
+      // of it; it means the character, so hand KaTeX the character.
+      html = katex.renderToString(unicodeMacro(tex), {
+        displayMode: m[1] !== undefined || m[4] !== undefined,
+        throwOnError: true,
+      });
+    } catch {
+      // Macros KaTeX doesn't know (\unicode{x2014} and friends show up in
+      // arXiv abstracts) stay as the source text, the way they read today.
+      continue;
+    }
+    parts.push(text.slice(prose, at));
+    parts.push(<span key={at} dangerouslySetInnerHTML={{ __html: html }} />);
+    prose = at + m[0].length;
+  }
+  parts.push(text.slice(prose));
+  return <p className="verdict-abstract">{parts}</p>;
 }
 
 /**
