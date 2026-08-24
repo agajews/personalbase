@@ -41,7 +41,8 @@ async function exec(
 // branch names travel as env, never shell-interpolated.
 const syncScript = `set -e
 export PATH="/nc/bin:$HOME/.local/bin:$PATH"
-corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
+mkdir -p /nc/bin
+corepack enable --install-directory /nc/bin
 if [ ! -d /nc/repo-main/.git ]; then
   git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" /nc/repo-main
 fi
