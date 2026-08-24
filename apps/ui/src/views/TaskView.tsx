@@ -28,7 +28,9 @@ function renderLines(raw: string): TranscriptLine[] {
       total_cost_usd?: number;
     };
     if (parsed.type === "system") {
-      return [{ kind: "meta", text: `session ${parsed.subtype ?? "event"}` }];
+      // System frames are mostly internal bookkeeping (thinking_tokens,
+      // task_started, …) emitted constantly; only session start is news.
+      return parsed.subtype === "init" ? [{ kind: "meta", text: "session started" }] : [];
     }
     if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
       const parts: TranscriptLine[] = [];
