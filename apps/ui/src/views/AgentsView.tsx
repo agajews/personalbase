@@ -22,6 +22,7 @@ export function AgentsView() {
   const tasks = data?.tasks ?? null;
   const [spec, setSpec] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(refresh, 3000);
@@ -29,7 +30,10 @@ export function AgentsView() {
   }, [refresh]);
 
   const submit = async () => {
-    if (spec.trim() === "") return;
+    // Guards the keyboard path too — BusyButton only debounces clicks, and a
+    // second cmd-enter before the POST returns would create a twin task.
+    if (spec.trim() === "" || submitting) return;
+    setSubmitting(true);
     try {
       const { taskUid } = await api.createDevTask(spec.trim());
       setSpec("");
@@ -40,6 +44,8 @@ export function AgentsView() {
       navTo(`/task/${taskUid}`);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -60,7 +66,7 @@ export function AgentsView() {
           rows={5}
           placeholder="What should the agent build? Be specific about behavior and where it lives. A title is generated for you. ⌘⏎ to start."
         />
-        <BusyButton onClick={submit} disabled={spec.trim() === ""}>
+        <BusyButton onClick={submit} disabled={spec.trim() === "" || submitting}>
           Start agent
         </BusyButton>
       </div>

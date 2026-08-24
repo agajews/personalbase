@@ -124,6 +124,8 @@ export function TaskView({ uid }: { uid: string }) {
   // Optimistic echo: sent messages render immediately and are dropped once
   // the folded copy arrives from the server.
   const [pending, setPending] = useState<{ text: string; at: number }[]>([]);
+  // Debounces both the button and the cmd-enter path across renders.
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +200,8 @@ export function TaskView({ uid }: { uid: string }) {
   const conversable = ["running", "pr_open", "failed"].includes(page.task.status);
   const turnActive = page.runs.some((r) => r.status === "running");
   const send = async (interrupt: boolean) => {
-    if (message.trim() === "") return;
+    if (message.trim() === "" || sendingRef.current) return;
+    sendingRef.current = true;
     const text = message.trim();
     setPending((prev) => [...prev, { text, at: Date.now() }]);
     try {
@@ -215,6 +218,8 @@ export function TaskView({ uid }: { uid: string }) {
     } catch (e) {
       setPending((prev) => prev.filter((p) => p.text !== text));
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      sendingRef.current = false;
     }
   };
 
