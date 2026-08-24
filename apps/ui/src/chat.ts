@@ -290,9 +290,16 @@ export async function streamChat(
   sql: Sql,
   chatUid: string,
   userText: string,
-  emit: (event: ChatStreamEvent) => Promise<void>,
+  rawEmit: (event: ChatStreamEvent) => Promise<void>,
 ): Promise<void> {
   client ??= new Anthropic();
+  // Serialize SSE writes: text deltas arrive on synchronous SDK events, and
+  // unawaited concurrent writes can interleave frame bytes on the wire.
+  let chain = Promise.resolve();
+  const emit = (event: ChatStreamEvent): Promise<void> => {
+    chain = chain.then(() => rawEmit(event));
+    return chain;
+  };
   // Load prior turns BEFORE appending this message, so a fast worker fold
   // can't make the new message show up twice.
   const prior = await loadTranscript(sql, chatUid);
@@ -369,4 +376,5 @@ export async function streamChat(
   ]);
   await catchUpFolds(sql, coreRegistry, [chatsFold]);
   await emit({ type: "done", reply });
+  await chain;
 }
