@@ -67,9 +67,18 @@ class SpriteSandbox implements Sandbox {
     return this.sprite;
   }
 
-  private async exec(command: string, timeoutMs: number): Promise<string> {
+  // The SDK's exec() runs the binary directly, no shell — pipes, redirects,
+  // and `cd` need an explicit bash -c.
+  private async exec(
+    command: string,
+    timeoutMs: number,
+    env?: Readonly<Record<string, string>>,
+  ): Promise<string> {
     const sprite = await this.handle();
-    const { stdout } = await sprite.exec(command, { timeout: timeoutMs });
+    const { stdout } = await sprite.execFile("bash", ["-c", command], {
+      timeout: timeoutMs,
+      ...(env === undefined ? {} : { env: { ...env } }),
+    });
     return String(stdout);
   }
 
@@ -88,11 +97,12 @@ class SpriteSandbox implements Sandbox {
     }
     // setsid detaches the run from this exec's session so it survives the
     // connection closing; the run inherits env from this exec.
-    await sprite.exec(
+    await this.exec(
       "cd /nc && rm -f exit-code result.json && touch run.log && " +
         "setsid bash -c 'bash /nc/run.sh > /nc/run.log 2>&1; echo $? > /nc/exit-code' " +
         "< /dev/null > /dev/null 2>&1 & echo launched",
-      { env: { ...env }, timeout: 60_000 },
+      60_000,
+      env,
     );
   }
 
