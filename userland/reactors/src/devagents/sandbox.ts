@@ -17,12 +17,17 @@ export interface SandboxPoll {
 
 export interface Sandbox {
   readonly name: string;
-  /** Writes each file under /nc/, then starts `bash /nc/run.sh` detached. */
+  /**
+   * Writes each file under `runDir`, then starts `bash <runDir>/run.sh`
+   * detached with NC_RUN_DIR set. One sandbox hosts many runs (conversation
+   * turns share the workspace); each run gets its own directory.
+   */
   start(
+    runDir: string,
     files: Readonly<Record<string, string>>,
     env: Readonly<Record<string, string>>,
   ): Promise<void>;
-  poll(cursor: number, maxBytes: number): Promise<SandboxPoll>;
+  poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll>;
   destroy(): Promise<void>;
 }
 
@@ -82,13 +87,21 @@ class SpriteSandbox implements Sandbox {
     return String(stdout);
   }
 
+  private static checkRunDir(runDir: string): void {
+    if (!/^\/nc\/[a-zA-Z0-9._/-]+$/.test(runDir)) {
+      throw new Error(`unsafe sandbox run dir: ${runDir}`);
+    }
+  }
+
   async start(
+    runDir: string,
     files: Readonly<Record<string, string>>,
     env: Readonly<Record<string, string>>,
   ): Promise<void> {
+    SpriteSandbox.checkRunDir(runDir);
     const sprite = await this.handle();
-    const fs = sprite.filesystem("/nc");
-    await fs.mkdir("/nc", { recursive: true });
+    const fs = sprite.filesystem(runDir);
+    await fs.mkdir(runDir, { recursive: true });
     for (const [name, content] of Object.entries(files)) {
       if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
         throw new Error(`unsafe sandbox file name: ${name}`);
@@ -101,26 +114,29 @@ class SpriteSandbox implements Sandbox {
     // timeout on a launch that actually went through) can't run the script
     // twice. Generous timeout — the first exec on a fresh sprite can be slow.
     await this.exec(
-      "cd /nc && ( [ -f launched ] || { touch launched; rm -f exit-code result.json; " +
-        "touch run.log; setsid bash -c 'bash /nc/run.sh > /nc/run.log 2>&1; " +
-        "echo $? > /nc/exit-code' < /dev/null > /dev/null 2>&1 & } ); echo launched",
+      `cd ${runDir} && ( [ -f launched ] || { touch launched; ` +
+        `setsid bash -c 'bash ${runDir}/run.sh > ${runDir}/run.log 2>&1; ` +
+        `echo $? > ${runDir}/exit-code' < /dev/null > /dev/null 2>&1 & } ); echo launched`,
       180_000,
-      env,
+      { ...env, NC_RUN_DIR: runDir },
     );
   }
 
-  async poll(cursor: number, maxBytes: number): Promise<SandboxPoll> {
+  async poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll> {
+    SpriteSandbox.checkRunDir(runDir);
     const chunk = await this.exec(
-      `tail -c +${cursor + 1} /nc/run.log 2>/dev/null | head -c ${maxBytes} | base64 -w0; true`,
+      `tail -c +${cursor + 1} ${runDir}/run.log 2>/dev/null | head -c ${maxBytes} | base64 -w0; true`,
       60_000,
     );
     const content = Buffer.from(chunk.trim(), "base64").toString("utf8");
-    const exitRaw = (await this.exec("cat /nc/exit-code 2>/dev/null; true", 60_000)).trim();
+    const exitRaw = (
+      await this.exec(`cat ${runDir}/exit-code 2>/dev/null; true`, 60_000)
+    ).trim();
     if (exitRaw === "") {
       return { content, exited: false, exitCode: null, result: null };
     }
     const resultRaw = (
-      await this.exec("cat /nc/result.json 2>/dev/null; true", 60_000)
+      await this.exec(`cat ${runDir}/result.json 2>/dev/null; true`, 60_000)
     ).trim();
     let result: unknown = null;
     if (resultRaw !== "") {

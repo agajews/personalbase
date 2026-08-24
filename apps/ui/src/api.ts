@@ -306,6 +306,8 @@ export const api = {
     post("/api/dev/tasks", { spec }),
   requestMerge: (taskUid: string, prNumber: number): Promise<unknown> =>
     post("/api/dev/merge", { taskUid, prNumber }),
+  sendDevMessage: (taskUid: string, message: string): Promise<unknown> =>
+    post("/api/dev/message", { taskUid, message }),
 };
 
 export interface DevRunSummary {

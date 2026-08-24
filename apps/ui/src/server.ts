@@ -881,6 +881,28 @@ app.post("/api/dev/tasks", async (c) => {
   return c.json({ ok: true });
 });
 
+const devMessageBody = z.object({
+  taskUid: z.uuid(),
+  message: z.string().min(1),
+});
+
+// A follow-up/clarification to a task's agent: the dev-agent reactor resumes
+// the task's Claude session in its kept-alive sandbox once the current turn
+// is idle. No fold consumes this event, so there's nothing to catch up.
+app.post("/api/dev/message", async (c) => {
+  const body = devMessageBody.parse(await c.req.json());
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.devmessage.sent",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: body,
+    },
+  ]);
+  return c.json({ ok: true });
+});
+
 const devMergeBody = z.object({
   taskUid: z.uuid(),
   prNumber: z.number().int().positive(),

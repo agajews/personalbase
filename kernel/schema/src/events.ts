@@ -127,6 +127,13 @@ export const devTaskTitledV1 = z.object({
 });
 export type DevTaskTitled = z.infer<typeof devTaskTitledV1>;
 
+/** A follow-up/clarification typed at a task's agent while it works. */
+export const userDevmessageSentV1 = z.object({
+  taskUid: z.uuid(),
+  message: z.string().min(1),
+});
+export type UserDevmessageSent = z.infer<typeof userDevmessageSentV1>;
+
 export const devRunStartedV1 = z.object({
   /** event_uid of the user.devtask.created event this run works on. */
   taskUid: z.uuid(),
@@ -213,6 +220,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   },
   { type: "user.devtask.created", versions: [{ schema: userDevtaskCreatedV1 }] },
   { type: "dev.task.titled", versions: [{ schema: devTaskTitledV1 }] },
+  { type: "user.devmessage.sent", versions: [{ schema: userDevmessageSentV1 }] },
   { type: "dev.run.started", versions: [{ schema: devRunStartedV1 }] },
   { type: "dev.transcript.appended", versions: [{ schema: devTranscriptAppendedV1 }] },
   { type: "dev.pr.opened", versions: [{ schema: devPrOpenedV1 }] },

@@ -120,6 +120,8 @@ export function TaskView({ uid }: { uid: string }) {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSpec, setShowSpec] = useState(false);
+  const [message, setMessage] = useState("");
+  const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +161,25 @@ export function TaskView({ uid }: { uid: string }) {
     if (featurePr?.prNumber == null) return;
     try {
       await api.requestMerge(page.task.taskUid, featurePr.prNumber);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // The agent's session survives between turns, so the conversation is open
+  // whenever the task hasn't merged.
+  const conversable = ["running", "pr_open", "failed"].includes(page.task.status);
+  const send = async () => {
+    if (message.trim() === "") return;
+    try {
+      await api.sendDevMessage(page.task.taskUid, message.trim());
+      setSent(
+        page.task.status === "running"
+          ? "sent — the agent picks this up when its current turn finishes"
+          : "sent — a new turn starts within seconds",
+      );
+      setMessage("");
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -214,6 +235,28 @@ export function TaskView({ uid }: { uid: string }) {
         </>
       )}
       {run === null && <div className="empty">No runs yet — the worker picks this up within seconds.</div>}
+      {conversable && (
+        <div className="dev-composer">
+          <textarea
+            value={message}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              setSent(null);
+            }}
+            rows={2}
+            placeholder="Send the agent a follow-up or clarification — it resumes the same session on the same branch."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
+            }}
+          />
+          <div className="dev-composer-row">
+            <button onClick={() => void send()} disabled={message.trim() === ""}>
+              Send to agent
+            </button>
+            {sent !== null && <span className="dev-composer-hint">{sent}</span>}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

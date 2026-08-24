@@ -65,54 +65,80 @@ keep \`pnpm typecheck\` green.
 secrets into the repo.`;
 }
 
+/**
+ * One script for every conversation turn of a feature task. Turn 1 clones and
+ * pins the Claude session id; later turns (DEV_RESUME=1) reuse the workspace
+ * and --resume the same session — the follow-up message is just the next
+ * prompt. Every turn ends by pushing whatever was committed and making sure
+ * the branch's PR exists.
+ */
 export const featureRunScript = `#!/usr/bin/env bash
 set -uo pipefail
-cd /nc
-echo "[nc] cloning $DEV_REPO"
-git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" repo \
-  || { echo '{"error":"clone failed"}' > /nc/result.json; exit 1; }
-cd repo
-git config user.name "nc dev agent"
-git config user.email "dev-agent@personalbase.invalid"
-git checkout -qb "$DEV_BRANCH" "origin/$DEV_TRUNK" \
-  || { echo '{"error":"branch checkout failed"}' > /nc/result.json; exit 1; }
-echo "[nc] installing dependencies"
-# The image ships corepack but its shim dir is read-only: enable into /nc/bin.
+fail() { echo "{\\"error\\":\\"$1\\"}" > "$NC_RUN_DIR/result.json"; exit 1; }
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 mkdir -p /nc/bin
 corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
 export PATH="/nc/bin:$HOME/.local/bin:$PATH"
+if [ ! -d /nc/repo ]; then
+  echo "[nc] cloning $DEV_REPO"
+  git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" /nc/repo \
+    || fail "clone failed"
+  cd /nc/repo
+  git config user.name "nc dev agent"
+  git config user.email "dev-agent@personalbase.invalid"
+  git checkout -qb "$DEV_BRANCH" "origin/$DEV_TRUNK" || fail "branch checkout failed"
+else
+  cd /nc/repo
+  git checkout -q "$DEV_BRANCH" || fail "branch checkout failed"
+fi
 command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
-pnpm install --frozen-lockfile > /nc/install.log 2>&1 \
-  || { tail -20 /nc/install.log; echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
-echo "[nc] installing claude code"
-npm install -g @anthropic-ai/claude-code > /nc/claude-install.log 2>&1 \
-  || { tail -20 /nc/claude-install.log; echo '{"error":"claude code install failed"}' > /nc/result.json; exit 1; }
-echo "[nc] starting claude"
-claude -p "$(cat /nc/spec.md)" --output-format stream-json --verbose \
-  --dangerously-skip-permissions
+if [ ! -d /nc/repo/node_modules ]; then
+  echo "[nc] installing dependencies"
+  pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 \
+    || { tail -20 "$NC_RUN_DIR/install.log"; fail "pnpm install failed"; }
+fi
+if ! command -v claude > /dev/null 2>&1; then
+  echo "[nc] installing claude code"
+  npm install -g @anthropic-ai/claude-code > "$NC_RUN_DIR/claude-install.log" 2>&1 \
+    || { tail -20 "$NC_RUN_DIR/claude-install.log"; fail "claude code install failed"; }
+fi
+echo "[nc] starting claude (resume=$DEV_RESUME)"
+if [ "$DEV_RESUME" = "1" ]; then
+  claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --resume "$DEV_SESSION_ID" \
+    --output-format stream-json --verbose --dangerously-skip-permissions
+else
+  claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --session-id "$DEV_SESSION_ID" \
+    --output-format stream-json --verbose --dangerously-skip-permissions
+fi
 CLAUDE_EXIT=$?
 echo "[nc] claude exited with $CLAUDE_EXIT"
+cd /nc/repo
 git add -A > /dev/null 2>&1 && git commit -qm "Dev agent: remaining working-tree changes" > /dev/null 2>&1
 if [ -z "$(git log "origin/$DEV_TRUNK..HEAD" --oneline)" ]; then
-  echo "[nc] agent made no commits"
-  echo '{"error":"agent made no commits"}' > /nc/result.json
-  exit 1
+  echo "[nc] no commits on the branch"
+  fail "agent made no commits"
 fi
 echo "[nc] pushing $DEV_BRANCH"
-git push -q origin "$DEV_BRANCH" \
-  || { echo '{"error":"push failed"}' > /nc/result.json; exit 1; }
-echo "[nc] opening pull request"
-node /nc/finish.mjs || { echo '{"error":"PR creation failed"}' > /nc/result.json; exit 1; }
+git push -q origin "$DEV_BRANCH" || fail "push failed"
+echo "[nc] ensuring pull request"
+node "$NC_RUN_DIR/finish.mjs" || fail "PR creation failed"
 echo "[nc] done"
 exit 0
 `;
 
-/** Opens the PR from /nc/pr.md and writes /nc/result.json. Runs inside the sandbox. */
+/**
+ * Ensures the branch's PR exists (idempotent — turn N of a conversation finds
+ * the PR turn 1 opened) and writes result.json. Runs inside the sandbox.
+ */
 export const featureFinishScript = `import { readFileSync, writeFileSync } from "node:fs";
 const repo = process.env.DEV_REPO;
 const trunk = process.env.DEV_TRUNK;
 const branch = process.env.DEV_BRANCH;
+const runDir = process.env.NC_RUN_DIR;
+const headers = {
+  authorization: \`Bearer \${process.env.GITHUB_TOKEN}\`,
+  accept: "application/vnd.github+json",
+};
 let title = process.env.DEV_TITLE;
 let body = "Automated change by the dev agent.";
 try {
@@ -121,12 +147,27 @@ try {
   body = pr.slice(1).join("\\n").trim() || body;
 } catch {}
 body += "\\n\\n🤖 Opened by the personalbase dev agent.";
+
+const finish = (data) => {
+  writeFileSync(
+    \`\${runDir}/result.json\`,
+    JSON.stringify({ prNumber: data.number, prUrl: data.html_url, branch, title: data.title }),
+  );
+  console.log("[nc] PR ready:", data.html_url);
+};
+
+const existing = await fetch(
+  \`https://api.github.com/repos/\${repo}/pulls?state=open&head=\${repo.split("/")[0]}:\${branch}\`,
+  { headers },
+);
+const open = existing.ok ? await existing.json() : [];
+if (Array.isArray(open) && open.length > 0) {
+  finish(open[0]);
+  process.exit(0);
+}
 const response = await fetch(\`https://api.github.com/repos/\${repo}/pulls\`, {
   method: "POST",
-  headers: {
-    authorization: \`Bearer \${process.env.GITHUB_TOKEN}\`,
-    accept: "application/vnd.github+json",
-  },
+  headers,
   body: JSON.stringify({ title, body, head: branch, base: trunk }),
 });
 const data = await response.json();
@@ -134,11 +175,7 @@ if (!response.ok) {
   console.log("[nc] PR creation failed:", JSON.stringify(data));
   process.exit(1);
 }
-writeFileSync(
-  "/nc/result.json",
-  JSON.stringify({ prNumber: data.number, prUrl: data.html_url, branch, title }),
-);
-console.log("[nc] opened PR", data.html_url);
+finish(data);
 `;
 
 export const mergeRunScript = `#!/usr/bin/env bash
@@ -146,30 +183,30 @@ set -uo pipefail
 cd /nc
 echo "[nc] cloning $DEV_REPO"
 git clone --quiet "https://x-access-token:\${GITHUB_TOKEN}@github.com/\${DEV_REPO}.git" repo \
-  || { echo '{"error":"clone failed"}' > /nc/result.json; exit 1; }
+  || { echo '{"error":"clone failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 cd repo
 git config user.name "nc merge agent"
 git config user.email "merge-agent@personalbase.invalid"
 echo "[nc] checking out PR #$DEV_PR_NUMBER"
 git fetch -q origin "pull/$DEV_PR_NUMBER/head:pr-branch" \
-  || { echo '{"error":"PR fetch failed"}' > /nc/result.json; exit 1; }
+  || { echo '{"error":"PR fetch failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 git checkout -q pr-branch
 echo "[nc] rebasing onto $DEV_TRUNK"
 git rebase "origin/$DEV_TRUNK" \
-  || { echo '{"error":"rebase conflict; resolve manually"}' > /nc/result.json; exit 1; }
+  || { echo '{"error":"rebase conflict; resolve manually"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] installing dependencies"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 mkdir -p /nc/bin
 corepack enable --install-directory /nc/bin > /dev/null 2>&1 || true
 export PATH="/nc/bin:$HOME/.local/bin:$PATH"
 command -v pnpm > /dev/null 2>&1 || npm install -g pnpm --force > /dev/null 2>&1
-pnpm install --frozen-lockfile > /nc/install.log 2>&1 || pnpm install > /nc/install.log 2>&1 \
-  || { tail -20 /nc/install.log; echo '{"error":"pnpm install failed"}' > /nc/result.json; exit 1; }
+pnpm install --frozen-lockfile > "$NC_RUN_DIR/install.log" 2>&1 || pnpm install > "$NC_RUN_DIR/install.log" 2>&1 \
+  || { tail -20 "$NC_RUN_DIR/install.log"; echo '{"error":"pnpm install failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] typechecking the rebased PR"
 pnpm typecheck \
-  || { echo '{"error":"typecheck failed on rebased PR"}' > /nc/result.json; exit 1; }
+  || { echo '{"error":"typecheck failed on rebased PR"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] merging via GitHub API"
-node /nc/merge.mjs || { echo '{"error":"merge failed"}' > /nc/result.json; exit 1; }
+node "$NC_RUN_DIR/merge.mjs" || { echo '{"error":"merge failed"}' > "$NC_RUN_DIR/result.json"; exit 1; }
 echo "[nc] deploying from merged trunk"
 git checkout -q "$DEV_TRUNK" && git pull -q origin "$DEV_TRUNK"
 curl -fsSL https://fly.io/install.sh 2>/dev/null | sh > /dev/null 2>&1
@@ -188,8 +225,8 @@ if [ -n "\${FLY_DEPLOY_TOKEN_UI:-}" ]; then
 fi
 NC_DEPLOYED="$DEPLOYED" node -e "
 const { readFileSync, writeFileSync } = require('node:fs');
-const merged = JSON.parse(readFileSync('/nc/merged.json', 'utf8'));
-writeFileSync('/nc/result.json', JSON.stringify({
+const merged = JSON.parse(readFileSync(process.env.NC_RUN_DIR + '/merged.json', 'utf8'));
+writeFileSync(process.env.NC_RUN_DIR + '/result.json', JSON.stringify({
   mergedSha: merged.sha,
   deployed: (process.env.NC_DEPLOYED || '').trim().split(' ').filter(Boolean),
 }));
@@ -215,6 +252,6 @@ if (!response.ok || data.merged !== true) {
   console.log("[nc] merge failed:", JSON.stringify(data));
   process.exit(1);
 }
-writeFileSync("/nc/merged.json", JSON.stringify({ sha: data.sha }));
+writeFileSync(process.env.NC_RUN_DIR + "/merged.json", JSON.stringify({ sha: data.sha }));
 console.log("[nc] merged as", data.sha);
 `;

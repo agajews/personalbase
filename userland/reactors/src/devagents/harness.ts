@@ -29,12 +29,21 @@ export interface LaunchArgs {
   readonly runUid: string;
   readonly branch: string | null;
   readonly prNumber?: number;
+  /** Reuse an existing sandbox (conversation turns); default: a fresh one. */
+  readonly sandboxName?: string;
+  /** Transcript preamble (e.g. the user's follow-up message) shown as chunk 0. */
+  readonly preamble?: string;
   readonly files: Readonly<Record<string, string>>;
   readonly env: Readonly<Record<string, string>>;
 }
 
+/** Each run's files live in their own directory inside the shared sandbox. */
+export function runDirFor(runUid: string): string {
+  return `/nc/run-${runUid.slice(0, 8)}`;
+}
+
 function chunkEvent(
-  payload: DevPollPayload,
+  payload: Pick<DevPollPayload, "taskUid" | "runUid" | "chunkSeq">,
   content: string,
 ): ReactorEvent {
   return {
@@ -79,7 +88,7 @@ export async function launchRun(
   provider: SandboxProvider,
   args: LaunchArgs,
 ): Promise<ReactorOutput> {
-  const sandboxName = `nc-dev-${args.runUid.slice(0, 8)}`;
+  const sandboxName = args.sandboxName ?? `nc-dev-${args.runUid.slice(0, 8)}`;
   // Cold sandboxes are occasionally slow to take their first command; retry
   // the launch a couple of times (start() is idempotent) before failing.
   let lastError = "";
@@ -87,7 +96,7 @@ export async function launchRun(
   for (let attempt = 0; attempt < 3 && !started; attempt++) {
     try {
       const sandbox = await provider.create(sandboxName);
-      await sandbox.start(args.files, args.env);
+      await sandbox.start(runDirFor(args.runUid), args.files, args.env);
       started = true;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -99,6 +108,15 @@ export async function launchRun(
       events: [finishedEvent(args, "failed", null, `sandbox launch failed: ${lastError}`)],
     };
   }
+  const preambleEvents: ReactorEvent[] =
+    args.preamble === undefined
+      ? []
+      : [
+          chunkEvent(
+            { taskUid: args.taskUid, runUid: args.runUid, chunkSeq: 0 },
+            args.preamble,
+          ),
+        ];
   const firstPoll: DevPollPayload = {
     step: "poll",
     kind: args.kind,
@@ -108,7 +126,7 @@ export async function launchRun(
     branch: args.branch,
     prNumber: args.prNumber ?? null,
     cursor: 0,
-    chunkSeq: 0,
+    chunkSeq: preambleEvents.length,
     polls: 0,
   };
   return {
@@ -127,6 +145,7 @@ export async function launchRun(
           branch: args.branch,
         },
       },
+      ...preambleEvents,
     ],
     followUps: [
       {
@@ -151,11 +170,12 @@ export async function pollRun(
   reactorName: string,
   payload: DevPollPayload,
   onExit: (result: unknown) => { events: ReactorEvent[]; summary: string | null },
+  options: { readonly destroySandboxOnSuccess: boolean } = { destroySandboxOnSuccess: true },
 ): Promise<ReactorOutput> {
   const sandbox = provider.open(payload.sandbox);
   let poll: SandboxPoll;
   try {
-    poll = await sandbox.poll(payload.cursor, pollMaxBytes);
+    poll = await sandbox.poll(runDirFor(payload.runUid), payload.cursor, pollMaxBytes);
   } catch (error) {
     // A vanished sandbox fails the run rather than retrying forever.
     const message = error instanceof Error ? error.message : String(error);
@@ -188,7 +208,11 @@ export async function pollRun(
       const outcome = onExit(poll.result);
       events.push(...outcome.events);
       events.push(finishedEvent(payload, "succeeded", outcome.summary, null));
-      await sandbox.destroy();
+      // Feature sandboxes stay alive for conversation follow-ups; the merge
+      // lane cleans them (and itself) up once the task's PR lands.
+      if (options.destroySandboxOnSuccess) {
+        await sandbox.destroy();
+      }
     } else {
       const resultError =
         typeof poll.result === "object" && poll.result !== null && "error" in poll.result

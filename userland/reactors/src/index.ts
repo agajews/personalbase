@@ -57,7 +57,7 @@ export {
   devMergeReactor,
   makeDevMergeReactor,
 } from "./devagents/devMerge.js";
-export { devPollPayload, type DevPollPayload } from "./devagents/harness.js";
+export { devPollPayload, runDirFor, type DevPollPayload } from "./devagents/harness.js";
 export {
   spritesProvider,
   type Sandbox,

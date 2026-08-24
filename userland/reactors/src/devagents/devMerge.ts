@@ -27,7 +27,7 @@ export function makeDevMergeReactor(
     kind: "reactor",
     name: "dev-merge",
     trigger: { kind: "event", consumes: ["user.devmerge.requested"] },
-    async run(_ctx, input): Promise<ReactorResult> {
+    async run(ctx, input): Promise<ReactorResult> {
       if (input.kind === "event") {
         const request = userDevmergeRequestedV1.parse(input.event.payload);
         const runUid = randomUUID();
@@ -62,7 +62,7 @@ export function makeDevMergeReactor(
         });
       }
       const payload = devPollPayload.parse(input.payload);
-      return pollRun(provider, "dev-merge", payload, (result) => {
+      const output = await pollRun(provider, "dev-merge", payload, (result) => {
         const parsed = resultSchema.safeParse(result);
         if (!parsed.success || payload.prNumber === null) {
           return { events: [], summary: "script succeeded but wrote no merge result" };
@@ -86,6 +86,22 @@ export function makeDevMergeReactor(
             : "no deploys ran";
         return { events: [merged], summary: `merged; ${deployed}` };
       });
+      // The task's conversation is over once its PR merges: clean up the
+      // feature sandboxes that were kept alive for follow-ups. Best-effort —
+      // a failed delete just leaves an idle (suspended) sprite behind.
+      if (output.events.some((e) => e.type === "dev.pr.merged")) {
+        const featureRuns = await ctx.sql`
+          select distinct sandbox from dev_runs
+          where task_uid = ${payload.taskUid} and kind = 'feature'`;
+        for (const row of featureRuns) {
+          try {
+            await provider.open(row["sandbox"]).destroy();
+          } catch {
+            // already gone or unreachable; the sprite idles harmlessly
+          }
+        }
+      }
+      return output;
     },
   };
 }

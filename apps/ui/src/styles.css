@@ -1085,6 +1085,34 @@ footer {
   padding: 0;
 }
 
+.dev-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.dev-composer textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.dev-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dev-composer-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ---- small screens ---- */
 
 @media (max-width: 760px) {
