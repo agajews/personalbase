@@ -4,17 +4,22 @@ import type { Reactor, ReactorEvent } from "@nc/process";
 
 // Hosts the main UI on a long-lived sprite so access rides Fly's org SSO —
 // the same browser sign-in the dev-preview URLs use — instead of a copied
-// password. Manual job: enqueue `reactor:main-ui` (payload {}) to (re)sync
-// the sprite to trunk, rebuild, and (re)register the service; rerun after
-// landing UI changes. Deliberately self-contained (SpritesClient directly)
-// rather than extending the dev-agent Sandbox interface: this is a
-// deployment target, not an agent sandbox, and the devagents module is under
-// active refactor by the other session.
+// password. Cron: every 15 minutes it compares trunk's sha (one GitHub API
+// call) against the deployed sha in reactor state and no-ops when nothing
+// landed; on change it resyncs the sprite, rebuilds, and replaces the
+// service, so the deployment tracks main by itself. Enqueue manually with
+// {force: true} to redeploy without a new commit (e.g. after service-def
+// changes). Deliberately self-contained (SpritesClient directly) rather than
+// extending the dev-agent Sandbox interface: this is a deployment target,
+// not an agent sandbox, and the devagents module is under active refactor by
+// the other session.
 
 const sandboxName = "nc-main-ui";
 const serviceName = "main-ui";
 
-export const mainUiJobPayload = z.object({});
+export const mainUiJobPayload = z.object({ force: z.boolean().optional() });
+
+const mainUiState = z.object({ deployedSha: z.string() });
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -52,23 +57,46 @@ git checkout -q "$DEV_TRUNK" 2>/dev/null || git checkout -qb "$DEV_TRUNK" "origi
 git reset --hard -q "origin/$DEV_TRUNK"
 pnpm install --frozen-lockfile > /nc/main-install.log 2>&1 || pnpm install > /nc/main-install.log 2>&1
 pnpm --filter @nc/ui exec vite build > /nc/main-build.log 2>&1
-git rev-parse --short HEAD
+git rev-parse HEAD
 `;
+
+/** Trunk's current sha, resolved without touching the sprite. */
+async function trunkSha(repo: string, trunk: string, githubToken: string): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(trunk)}`,
+    {
+      headers: {
+        authorization: `Bearer ${githubToken}`,
+        accept: "application/vnd.github.sha",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub sha lookup failed: ${response.status}`);
+  }
+  return (await response.text()).trim();
+}
 
 export const mainUiReactor: Reactor = {
   kind: "reactor",
   name: "main-ui",
-  trigger: { kind: "manual" },
-  async run(_ctx, input): Promise<ReactorEvent[]> {
+  trigger: { kind: "cron", schedule: { intervalHours: 0.25 }, payload: {} },
+  async run(ctx, input): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
       throw new Error("main-ui only supports job triggers");
     }
-    mainUiJobPayload.parse(input.payload);
+    const payload = mainUiJobPayload.parse(input.payload);
     const spritesToken = required("SPRITES_TOKEN");
     const githubToken = required("GITHUB_TOKEN");
     const databaseUrl = required("DATABASE_URL");
     const repo = process.env["DEV_REPO"] ?? "agajews/personalbase";
     const trunk = process.env["DEV_TRUNK"] ?? "main";
+    const wantSha = await trunkSha(repo, trunk, githubToken);
+    const state = mainUiState.safeParse(await ctx.getState());
+    if (payload.force !== true && state.success && state.data.deployedSha === wantSha) {
+      console.log(`main-ui already at ${trunk}@${wantSha.slice(0, 8)}`);
+      return [];
+    }
     const client = new SpritesClient(spritesToken);
     let sprite: Sprite;
     try {
@@ -110,6 +138,7 @@ export const mainUiReactor: Reactor = {
     });
     const url = (await client.getSprite(sandboxName)).url ?? "(url pending)";
     console.log(`main-ui service registered: ${url}`);
+    await ctx.setState({ deployedSha: sha });
     return [];
   },
 };

@@ -83,7 +83,9 @@ export async function enqueueDueCronJobs(
     const schedule = reactor.trigger.schedule;
     const lastTick =
       "intervalHours" in schedule
-        ? sql`now() - make_interval(hours => ${schedule.intervalHours})`
+        ? // secs, not hours: make_interval's hours parameter is an integer,
+          // so sub-hour intervals (main-ui's 0.25) would silently break.
+          sql`now() - make_interval(secs => ${schedule.intervalHours * 3600})`
         : sql`(date_trunc('day', now() at time zone ${schedule.timeZone})
               + make_interval(hours => ${schedule.dailyAtHour})
               - case when extract(hour from now() at time zone ${schedule.timeZone})
