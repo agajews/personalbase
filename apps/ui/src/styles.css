@@ -420,7 +420,9 @@ textarea {
 .timeline .timeline-date::before {
   content: "";
   position: absolute;
-  left: -29px;
+  /* centered on the 2px spine: 22px padding + 2px border + 2px date margin,
+     back off half the 10px dot, forward 1px to the middle of the line. */
+  left: -30px;
   top: 17px;
   width: 10px;
   height: 10px;
