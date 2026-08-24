@@ -992,9 +992,9 @@ const devMessageBody = z.object({
   interrupt: z.boolean().default(false),
 });
 
-// A follow-up/clarification to a task's agent: the dev-agent reactor resumes
-// the task's Claude session in its kept-alive sandbox once the current turn
-// is idle. No fold consumes this event, so there's nothing to catch up.
+// A follow-up/clarification to a task's agent: streamed into the live
+// session (or reopens a dormant one). Folding here makes the message bubble
+// visible on the task page's next poll instead of waiting for the daemon.
 app.post("/api/dev/message", async (c) => {
   const body = devMessageBody.parse(await c.req.json());
   await appendEvents(sql, coreRegistry, [
@@ -1006,6 +1006,7 @@ app.post("/api/dev/message", async (c) => {
       payload: body,
     },
   ]);
+  await catchUpFolds(sql, coreRegistry, folds);
   return c.json({ ok: true });
 });
 

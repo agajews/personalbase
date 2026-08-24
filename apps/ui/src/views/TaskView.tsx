@@ -121,6 +121,9 @@ export function TaskView({ uid }: { uid: string }) {
   const [showSpec, setShowSpec] = useState(false);
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState<string | null>(null);
+  // Optimistic echo: sent messages render immediately and are dropped once
+  // the folded copy arrives from the server.
+  const [pending, setPending] = useState<{ text: string; at: number }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +171,14 @@ export function TaskView({ uid }: { uid: string }) {
       msgUid: m.msgUid,
       text: m.message,
     })),
+    ...pending
+      .filter((p) => !page.messages.some((m) => m.message === p.text))
+      .map((p, i) => ({
+        kind: "message" as const,
+        at: p.at,
+        msgUid: `pending-${i}`,
+        text: p.text,
+      })),
   ].sort((a, b) => a.at - b.at);
   const featurePr = [...page.runs].reverse().find((r) => r.prNumber !== null);
   const mergeable = page.task.status === "pr_open" && featurePr?.prNumber != null;
@@ -188,8 +199,10 @@ export function TaskView({ uid }: { uid: string }) {
   const turnActive = page.runs.some((r) => r.status === "running");
   const send = async (interrupt: boolean) => {
     if (message.trim() === "") return;
+    const text = message.trim();
+    setPending((prev) => [...prev, { text, at: Date.now() }]);
     try {
-      await api.sendDevMessage(page.task.taskUid, message.trim(), interrupt);
+      await api.sendDevMessage(page.task.taskUid, text, interrupt);
       setSent(
         interrupt
           ? "sent — interrupting the current turn"
@@ -200,6 +213,7 @@ export function TaskView({ uid }: { uid: string }) {
       setMessage("");
       setError(null);
     } catch (e) {
+      setPending((prev) => prev.filter((p) => p.text !== text));
       setError(e instanceof Error ? e.message : String(e));
     }
   };

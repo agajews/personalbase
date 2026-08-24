@@ -137,8 +137,13 @@ echo $! > "$NC_RUN_DIR/holder.pid"
 
 # --resume FORKS the transcript under a fresh session id, so /nc/session-id
 # always tracks the latest fork; the wrapper captures it from the stream the
-# moment it appears (so even an interrupted run's id survives).
+# moment it appears (so even an interrupted run's id survives). Tasks whose
+# first turn predates session-id tracking have a transcript under the pinned
+# id but no marker file — resume that rather than colliding with it.
 LAST_SESSION=$(cat /nc/session-id 2>/dev/null)
+if [ -z "$LAST_SESSION" ] && ls "$HOME"/.claude/projects/*/"$DEV_SESSION_ID".jsonl > /dev/null 2>&1; then
+  LAST_SESSION="$DEV_SESSION_ID"
+fi
 if [ -n "$LAST_SESSION" ]; then
   echo "[nc] starting claude session (resuming $LAST_SESSION)"
   RESUME_ARGS=(--resume "$LAST_SESSION")
@@ -163,6 +168,11 @@ claude -p --input-format stream-json --output-format stream-json --verbose \
   done
 CLAUDE_EXIT=\${PIPESTATUS[0]}
 echo "[nc] session ended with $CLAUDE_EXIT"
+if [ ! -f "$NC_RUN_DIR/sid-captured" ] && [ "$CLAUDE_EXIT" != "0" ]; then
+  # Claude never produced a session — a startup failure (bad resume id,
+  # auth, ...) must be a loud run failure, not a quiet session close.
+  fail "claude failed to start (exit $CLAUDE_EXIT)"
+fi
 bash "$NC_RUN_DIR/turn-end.sh" 2>&1
 echo '{"sessionEnded":true}' > "$NC_RUN_DIR/result.json"
 exit 0
