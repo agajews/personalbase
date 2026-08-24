@@ -18,6 +18,12 @@ const prJsonSchema = z.object({
   title: z.string(),
 });
 
+// merge-request.json is pr.json plus a per-request stamp, so the same PR can
+// be re-requested after a failed merge lane. Older markers lack the stamp.
+const mergeRequestSchema = prJsonSchema.extend({
+  requestId: z.number().int().optional(),
+});
+
 export const devPollPayload = z.object({
   step: z.literal("poll"),
   kind: z.enum(["feature", "merge"]),
@@ -276,17 +282,27 @@ export async function pollRun(
   // in-conversation instruction). Same event flow as the UI button, agent-
   // attributed; forwarded once per PR.
   const mergeSeen = [...payload.mergeSeen];
-  const mergeParsed = prJsonSchema.safeParse(poll.mergeRequest);
-  if (mergeParsed.success && !mergeSeen.includes(mergeParsed.data.prNumber)) {
-    events.push({
-      type: "agent.devmerge.requested",
-      schemaVersion: 1,
-      occurredAt: new Date().toISOString(),
-      causedByUid: payload.taskUid,
-      idempotencyKey: `dev:${payload.taskUid}:merge-request:${mergeParsed.data.prNumber}`,
-      payload: { taskUid: payload.taskUid, prNumber: mergeParsed.data.prNumber },
-    });
-    mergeSeen.push(mergeParsed.data.prNumber);
+  const mergeParsed = mergeRequestSchema.safeParse(poll.mergeRequest);
+  if (mergeParsed.success) {
+    // Dedupe on the request stamp when present (epoch seconds — disjoint
+    // from PR numbers), else on the PR number for legacy markers.
+    const requestId = mergeParsed.data.requestId;
+    const seenToken = requestId ?? mergeParsed.data.prNumber;
+    if (!mergeSeen.includes(seenToken)) {
+      const idempotencyKey =
+        requestId === undefined
+          ? `dev:${payload.taskUid}:merge-request:${mergeParsed.data.prNumber}`
+          : `dev:${payload.taskUid}:merge-request:${mergeParsed.data.prNumber}:${requestId}`;
+      events.push({
+        type: "agent.devmerge.requested",
+        schemaVersion: 1,
+        occurredAt: new Date().toISOString(),
+        causedByUid: payload.taskUid,
+        idempotencyKey,
+        payload: { taskUid: payload.taskUid, prNumber: mergeParsed.data.prNumber },
+      });
+      mergeSeen.push(seenToken);
+    }
   }
   let consumedBytes = 0;
   if (poll.content !== "") {

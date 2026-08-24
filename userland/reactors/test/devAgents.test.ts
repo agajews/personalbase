@@ -407,15 +407,42 @@ describe("dev-agent live sessions", () => {
       ).length,
     ).toBe(1);
 
-    // The merge lane picks it up exactly like a button press.
+    // Re-running nc-request-merge stamps a fresh requestId, so the same PR
+    // can be re-requested (say, after a failed merge lane) — but the same
+    // stamp is still forwarded only once.
+    box.mergeRequest = { ...pr, requestId: 1_750_000_000 };
+    await pass();
+    await pass();
+    expect(
+      (
+        await readEvents(sql, coreRegistry, {
+          afterSeq: 0n,
+          patterns: ["agent.devmerge.requested"],
+          limit: 10,
+        })
+      ).length,
+    ).toBe(2);
+
+    // The merge lane picks it up exactly like a button press. Both requests
+    // launched a lane; land them all so no poll chain leaks into later tests.
     await catchUpEventReactors(sql, coreRegistry, [devMerge]);
     await catchUpFold(sql, coreRegistry, devFold);
-    const mergeStart = await lastRunStarted();
-    const mergeBox = boxes.get(mergeStart.sandbox)!;
-    const mergeTurn = mergeBox.run(runDirFor(mergeStart.runUid));
-    expect(mergeTurn.env["DEV_PR_NUMBER"]).toBe("9");
-    mergeTurn.exitCode = 0;
-    mergeTurn.result = { mergedSha: "def456", deployed: ["personalbase-worker"] };
+    const allStarted = await readEvents(sql, coreRegistry, {
+      afterSeq: 0n,
+      patterns: ["dev.run.started"],
+      limit: 50,
+    });
+    const mergeStarts = allStarted
+      .map((e) => e.payload as { taskUid: string; runUid: string; sandbox: string; kind: string })
+      .filter((p) => p.kind === "merge" && p.taskUid === started.taskUid);
+    expect(mergeStarts).toHaveLength(2);
+    for (const mergeStart of mergeStarts) {
+      const mergeBox = boxes.get(mergeStart.sandbox)!;
+      const mergeTurn = mergeBox.run(runDirFor(mergeStart.runUid));
+      expect(mergeTurn.env["DEV_PR_NUMBER"]).toBe("9");
+      mergeTurn.exitCode = 0;
+      mergeTurn.result = { mergedSha: "def456", deployed: ["personalbase-worker"] };
+    }
     // End the feature session so the drain below settles.
     await box.endSession(runDirFor(started.runUid));
     for (let i = 0; i < 4; i++) {

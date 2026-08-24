@@ -299,7 +299,14 @@ if [ ! -f "$NC_RUN_DIR/pr.json" ]; then
   echo "no PR could be created (are there commits on the branch?)"
   exit 1
 fi
-cp "$NC_RUN_DIR/pr.json" /nc/merge-request.json
+# Stamp a fresh requestId so re-requesting the same PR (after a failed merge
+# lane, say) isn't swallowed by the harness's seen-request dedupe.
+node -e '
+  const fs = require("fs");
+  const pr = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  pr.requestId = Math.floor(Date.now() / 1000);
+  fs.writeFileSync("/nc/merge-request.json", JSON.stringify(pr));
+' "$NC_RUN_DIR/pr.json"
 echo "merge requested — the merge lane will rebase, typecheck, squash-merge, and deploy"
 `;
 
