@@ -1374,6 +1374,21 @@ footer {
   color: #f2f6f2;
 }
 
+.conversation-run {
+  margin-top: 10px;
+}
+
+.dev-user-msg {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: var(--card);
+  border: 1px solid var(--spruce);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+}
+
 .dev-queued {
   margin-top: 12px;
   display: flex;

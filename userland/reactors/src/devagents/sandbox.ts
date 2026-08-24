@@ -15,6 +15,10 @@ export interface SandboxPoll {
   readonly result: unknown;
   /** True once the agent has started a dev-server preview (/nc/preview.json). */
   readonly previewRunning: boolean;
+  /** Parsed <runDir>/pr.json — the turn-end hook records the branch's PR here. */
+  readonly pr: unknown;
+  /** Seconds since the run last produced output (idle-close decisions). */
+  readonly idleSeconds: number;
 }
 
 export interface Sandbox {
@@ -30,6 +34,16 @@ export interface Sandbox {
     env: Readonly<Record<string, string>>,
   ): Promise<void>;
   poll(runDir: string, cursor: number, maxBytes: number): Promise<SandboxPoll>;
+  /**
+   * Streams a user message into the run's live Claude session (its stdin
+   * pipe). Near-instant; requires the session process to be alive.
+   */
+  sendMessage(runDir: string, message: string): Promise<void>;
+  /**
+   * Gracefully ends a live session: closes its stdin pipe so Claude finishes
+   * the current turn and exits. Idempotent.
+   */
+  endSession(runDir: string): Promise<void>;
   /**
    * Stops a run mid-turn (kills its process group) and marks it exited with
    * an interrupted result, so the poll chain closes it out gracefully.
@@ -166,18 +180,38 @@ class SpriteSandbox implements Sandbox {
       60_000,
     );
     const content = Buffer.from(chunk.trim(), "base64").toString("utf8");
-    // exit-code and the preview marker piggyback on one round trip.
+    // Exit code, preview marker, PR marker, and idle age in one round trip.
     const state = (
       await this.exec(
         `echo "exit=$(cat ${runDir}/exit-code 2>/dev/null)"; ` +
-          `echo "preview=$([ -f /nc/preview.json ] && echo 1)"; true`,
+          `echo "preview=$([ -f /nc/preview.json ] && echo 1)"; ` +
+          `echo "idle=$(( $(date +%s) - $(stat -c %Y ${runDir}/run.log 2>/dev/null || date +%s) ))"; ` +
+          `echo "prjson=$(base64 -w0 ${runDir}/pr.json 2>/dev/null)"; true`,
         60_000,
       )
     ).trim();
     const exitRaw = /exit=(\S*)/.exec(state)?.[1] ?? "";
     const previewRunning = /preview=1/.test(state);
+    const idleSeconds = Number(/idle=(-?\d+)/.exec(state)?.[1] ?? "0");
+    const prRaw = /prjson=(\S*)/.exec(state)?.[1] ?? "";
+    let pr: unknown = null;
+    if (prRaw !== "") {
+      try {
+        pr = JSON.parse(Buffer.from(prRaw, "base64").toString("utf8"));
+      } catch {
+        pr = null;
+      }
+    }
     if (exitRaw === "") {
-      return { content, exited: false, exitCode: null, result: null, previewRunning };
+      return {
+        content,
+        exited: false,
+        exitCode: null,
+        result: null,
+        previewRunning,
+        pr,
+        idleSeconds,
+      };
     }
     const resultRaw = (
       await this.exec(`cat ${runDir}/result.json 2>/dev/null; true`, 60_000)
@@ -190,7 +224,41 @@ class SpriteSandbox implements Sandbox {
         result = null;
       }
     }
-    return { content, exited: true, exitCode: Number(exitRaw), result, previewRunning };
+    return {
+      content,
+      exited: true,
+      exitCode: Number(exitRaw),
+      result,
+      previewRunning,
+      pr,
+      idleSeconds,
+    };
+  }
+
+  async sendMessage(runDir: string, message: string): Promise<void> {
+    SpriteSandbox.checkRunDir(runDir);
+    const sprite = await this.handle();
+    // The message travels as env so nothing user-typed is shell-interpolated;
+    // node emits the exact stream-json user frame into the session's pipe.
+    await sprite.execFile(
+      "bash",
+      [
+        "-c",
+        `node -e 'process.stdout.write(JSON.stringify({type: "user", message: {role: "user", ` +
+          `content: [{type: "text", text: process.env.NC_MSG}]}}) + "\\n")' >> ${runDir}/input`,
+      ],
+      { env: { NC_MSG: message }, timeout: 60_000 },
+    );
+  }
+
+  async endSession(runDir: string): Promise<void> {
+    SpriteSandbox.checkRunDir(runDir);
+    // Killing the pipe holder EOFs Claude's stdin; it finishes the current
+    // turn and exits, and the run wrapper records the exit code.
+    await this.exec(
+      `[ -f ${runDir}/holder.pid ] && kill "$(cat ${runDir}/holder.pid)" 2>/dev/null; echo done`,
+      60_000,
+    );
   }
 
   async url(): Promise<string | null> {
@@ -207,6 +275,18 @@ class SpriteSandbox implements Sandbox {
     // node to run on.
     const withPath = (cmd: string) =>
       `export PATH="/nc/bin:$HOME/.local/bin:$PATH"; ${cmd}`;
+    // Replace-on-register: stale definitions (e.g. from before a harness
+    // fix) would otherwise crashloop forever behind the preview link.
+    for (const name of ["preview-vite", "preview-api"]) {
+      if (have.has(name)) {
+        try {
+          await sprite.deleteService(name);
+        } catch {
+          // best effort; creation below will surface real problems
+        }
+        have.delete(name);
+      }
+    }
     if (!have.has("preview-api")) {
       await sprite.createService("preview-api", {
         cmd: "bash",

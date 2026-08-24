@@ -25,6 +25,9 @@ interface FakeRun {
   log: string;
   exitCode: number | null;
   result: unknown;
+  pr: unknown;
+  idleSeconds: number;
+  messages: string[];
 }
 
 class FakeSandbox implements Sandbox {
@@ -54,6 +57,9 @@ class FakeSandbox implements Sandbox {
       log: "",
       exitCode: null,
       result: null,
+      pr: null,
+      idleSeconds: 0,
+      messages: [],
     });
   }
 
@@ -73,7 +79,25 @@ class FakeSandbox implements Sandbox {
       exitCode: run.exitCode,
       result: run.result,
       previewRunning: this.previewRunning,
+      pr: run.pr,
+      idleSeconds: run.idleSeconds,
     };
+  }
+
+  async sendMessage(runDir: string, message: string): Promise<void> {
+    const run = this.run(runDir);
+    if (run.exitCode !== null) {
+      throw new Error("session pipe is gone");
+    }
+    run.messages.push(message);
+  }
+
+  async endSession(runDir: string): Promise<void> {
+    const run = this.run(runDir);
+    if (run.exitCode === null) {
+      run.exitCode = 0;
+      run.result = { sessionEnded: true };
+    }
   }
 
   async interrupt(runDir: string): Promise<void> {
@@ -92,6 +116,10 @@ class FakeSandbox implements Sandbox {
 const boxes = new Map<string, FakeSandbox>();
 const provider: SandboxProvider = {
   async create(name: string): Promise<Sandbox> {
+    const existing = boxes.get(name);
+    if (existing !== undefined) {
+      return existing;
+    }
     const box = new FakeSandbox(name);
     boxes.set(name, box);
     return box;
@@ -123,15 +151,39 @@ const fakeTitler = async (spec: string) => ({
 const devAgent = makeDevAgentReactor(provider, config, fakeTitler);
 const devMerge = makeDevMergeReactor(provider, config);
 
-async function duePolls(): Promise<number> {
+/** One daemon-ish pass: make pending jobs due, run them, fold the results. */
+async function pass(): Promise<number> {
   await sql`update jobs set run_after = now() where status = 'pending'`;
-  return processPendingJobs(sql, coreRegistry, [devAgent, devMerge]);
+  const ran = await processPendingJobs(sql, coreRegistry, [devAgent, devMerge]);
+  await catchUpFold(sql, coreRegistry, devFold);
+  return ran;
+}
+
+async function lastRunStarted(): Promise<{
+  taskUid: string;
+  runUid: string;
+  sandbox: string;
+  branch: string;
+}> {
+  const started = await readEvents(sql, coreRegistry, {
+    afterSeq: 0n,
+    patterns: ["dev.run.started"],
+    limit: 50,
+  });
+  return started[started.length - 1]!.payload as {
+    taskUid: string;
+    runUid: string;
+    sandbox: string;
+    branch: string;
+  };
 }
 
 let taskUid: string;
+let sessionBox: FakeSandbox;
+let sessionRunDir: string;
 
-describe("dev-agent flow", () => {
-  test("task event launches a sandbox and streams the transcript", async () => {
+describe("dev-agent live sessions", () => {
+  test("a task launches one live session that streams and announces its PR mid-run", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devtask.created",
@@ -142,248 +194,129 @@ describe("dev-agent flow", () => {
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
+    await catchUpFold(sql, coreRegistry, devFold);
 
-    // The title is generated at launch and emitted as its own event.
-    const titled = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.task.titled"],
-      limit: 10,
-    });
-    expect(titled).toHaveLength(1);
-    expect((titled[0]!.payload as { title: string }).title).toBe("Add a widget");
-
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 10,
-    });
-    expect(started).toHaveLength(1);
-    const payload = started[0]!.payload as {
-      sandbox: string;
-      branch: string;
-      taskUid: string;
-      runUid: string;
-    };
-    taskUid = payload.taskUid;
-    expect(payload.branch).toMatch(/^agent\/add-a-widget-/);
-
-    const box = boxes.get(payload.sandbox)!;
-    const turn = box.run(runDirFor(payload.runUid));
-    expect(turn.env["GITHUB_TOKEN"]).toBe("gh-token");
-    expect(turn.env["DEV_BRANCH"]).toBe(payload.branch);
-    expect(turn.env["DEV_SESSION_ID"]).toBe(payload.taskUid);
-    expect(turn.env["DEV_RESUME"]).toBe("0");
-    expect(turn.files["run.sh"]).toContain("claude -p");
+    const started = await lastRunStarted();
+    taskUid = started.taskUid;
+    sessionBox = boxes.get(started.sandbox)!;
+    sessionRunDir = runDirFor(started.runUid);
+    const turn = sessionBox.run(sessionRunDir);
+    expect(turn.env["DEV_SESSION_ID"]).toBe(taskUid);
+    expect(turn.files["run.sh"]).toContain("mkfifo");
+    expect(turn.files["turn-end.sh"]).toContain("git push");
     expect(turn.files["prompt.md"]).toContain("Build the widget view.");
 
-    // First poll: new log lines become a transcript chunk, chain continues.
-    turn.log = "[nc] cloning me/repo\nline two\n";
-    expect(await duePolls()).toBe(1);
+    // Output streams as chunks while the session stays alive.
+    turn.log = "[nc] starting claude session (new)\nhello world\n";
+    expect(await pass()).toBe(1);
     const chunks = await readEvents(sql, coreRegistry, {
       afterSeq: 0n,
       patterns: ["dev.transcript.appended"],
       limit: 10,
     });
     expect(chunks).toHaveLength(1);
-    expect((chunks[0]!.payload as { content: string }).content).toBe(
-      "[nc] cloning me/repo\nline two\n",
-    );
 
-    // The agent starts a live preview: the next poll surfaces the sandbox
-    // URL exactly once.
-    box.previewRunning = true;
-    expect(await duePolls()).toBe(1);
-    const previews = await readEvents(sql, coreRegistry, {
+    // The turn-end hook records the PR; the poller announces it mid-session.
+    turn.pr = {
+      prNumber: 7,
+      prUrl: "https://github.com/me/repo/pull/7",
+      branch: started.branch,
+      title: "Add a widget",
+    };
+    expect(await pass()).toBe(1);
+    const opened = await readEvents(sql, coreRegistry, {
       afterSeq: 0n,
-      patterns: ["dev.preview.started"],
+      patterns: ["dev.pr.opened"],
       limit: 10,
     });
-    expect(previews).toHaveLength(1);
-    expect((previews[0]!.payload as { url: string }).url).toBe(
-      `https://${payload.sandbox}.sprites.app`,
-    );
-    // The preview runs as supervised services with the read-only credentials.
-    expect(box.previewStartedWith).toBe("postgres://readonly@example/db");
-    // Later polls do not re-emit it.
-    expect(await duePolls()).toBe(1);
+    expect(opened).toHaveLength(1);
+    // Announced once; later polls do not repeat it.
+    await pass();
     expect(
       await readEvents(sql, coreRegistry, {
         afterSeq: 0n,
-        patterns: ["dev.preview.started"],
+        patterns: ["dev.pr.opened"],
         limit: 10,
       }),
     ).toHaveLength(1);
 
-    // Exit with a PR result: pr.opened + run.finished; the sandbox stays
-    // alive so the conversation can continue.
-    turn.log += "[nc] done\n";
-    turn.exitCode = 0;
-    turn.result = {
-      prNumber: 7,
-      prUrl: "https://github.com/me/repo/pull/7",
-      branch: payload.branch,
-      title: "Add a widget",
-    };
-    expect(await duePolls()).toBe(1);
-    expect(box.destroyed).toBe(false);
-
-    const opened = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.pr.opened", "dev.run.finished"],
-      limit: 10,
-    });
-    expect(opened.map((e) => e.type).sort()).toEqual(["dev.pr.opened", "dev.run.finished"]);
-
-    // No further polls scheduled.
-    expect(await duePolls()).toBe(0);
-
-    await catchUpFold(sql, coreRegistry, devFold);
-    const tasks = await sql`select status, title, preview_url from dev_tasks`;
+    const tasks = await sql`select status, title from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("pr_open");
     expect(tasks[0]!["title"]).toBe("Add a widget");
-    expect(tasks[0]!["preview_url"]).toBe(`https://${payload.sandbox}.sprites.app`);
-    const runs = await sql`select status, pr_number, sandbox from dev_runs`;
-    expect(runs[0]!["status"]).toBe("succeeded");
+    const runs = await sql`select status, pr_number from dev_runs`;
+    expect(runs[0]!["status"]).toBe("running"); // session still alive
     expect(runs[0]!["pr_number"]).toBe(7);
-    const stored = await sql`select content from dev_transcript_chunks order by chunk_seq`;
-    expect(stored.length).toBeGreaterThanOrEqual(2);
+    expect(sessionBox.destroyed).toBe(false);
   });
 
-  test("a follow-up message resumes the session in the same sandbox", async () => {
+  test("a follow-up streams straight into the live session — no new run", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devmessage.sent",
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { taskUid, message: "Also show seconds in the duration." },
+        payload: { taskUid, message: "Also show seconds.", interrupt: false },
       },
     ]);
-    // The event hands off to a message job; the job launches the next turn.
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
-    expect(await duePolls()).toBe(1);
+    await pass();
 
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 10,
-    });
-    expect(started).toHaveLength(2);
-    const first = started[0]!.payload as { sandbox: string; branch: string };
-    const second = started[1]!.payload as { sandbox: string; branch: string; runUid: string };
-    // Same sandbox, same branch — the conversation continues in place.
-    expect(second.sandbox).toBe(first.sandbox);
-    expect(second.branch).toBe(first.branch);
-
-    const box = boxes.get(second.sandbox)!;
-    const turn = box.run(runDirFor(second.runUid));
-    expect(turn.env["DEV_RESUME"]).toBe("1");
-    expect(turn.env["DEV_SESSION_ID"]).toBe(taskUid);
-    expect(turn.files["prompt.md"]).toContain("Also show seconds");
-
-    // Finish the turn: same PR is re-reported, task returns to pr_open.
-    turn.exitCode = 0;
-    turn.result = {
-      prNumber: 7,
-      prUrl: "https://github.com/me/repo/pull/7",
-      branch: second.branch,
-      title: "Add a widget",
-    };
-    expect(await duePolls()).toBe(1);
-    expect(box.destroyed).toBe(false);
-
-    await catchUpFold(sql, coreRegistry, devFold);
-    const tasks = await sql`select status from dev_tasks where task_uid = ${taskUid}`;
-    expect(tasks[0]!["status"]).toBe("pr_open");
+    expect(sessionBox.run(sessionRunDir).messages).toEqual(["Also show seconds."]);
     const runs = await sql`
-      select count(*)::int as n from dev_runs
-      where task_uid = ${taskUid} and kind = 'feature' and status = 'succeeded'`;
-    expect(runs[0]!["n"]).toBe(2);
-    // The user's message opens the new run's transcript.
-    const preamble = await sql`
-      select content from dev_transcript_chunks
-      where run_uid = ${second.runUid} and chunk_seq = 0`;
-    expect(preamble[0]!["content"]).toContain("Also show seconds");
+      select count(*)::int as n from dev_runs where task_uid = ${taskUid}`;
+    expect(runs[0]!["n"]).toBe(1);
+    const messages = await sql`
+      select message from dev_messages where task_uid = ${taskUid}`;
+    expect(messages[0]!["message"]).toBe("Also show seconds.");
   });
 
-  test("an interrupt message stops the current turn and starts the next", async () => {
-    // Kick off a turn and leave it running.
+  test("interrupt kills the live session; a fresh run resumes it with the message", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devmessage.sent",
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { taskUid, message: "Try a bolder color.", interrupt: false },
+        payload: { taskUid, message: "Stop — muted palette instead.", interrupt: true },
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
-    expect(await duePolls()).toBe(1); // message job launches the turn
-    await catchUpFold(sql, coreRegistry, devFold);
-
-    // Interrupt mid-turn.
-    await appendEvents(sql, coreRegistry, [
-      {
-        type: "user.devmessage.sent",
-        schemaVersion: 1,
-        source: "ui:web",
-        occurredAt: new Date().toISOString(),
-        payload: { taskUid, message: "Stop — use the muted palette instead.", interrupt: true },
-      },
-    ]);
-    await catchUpEventReactors(sql, coreRegistry, [devAgent]);
-    // Interrupt job kills the turn; the poll job closes it; the waiting
-    // message job launches the resume turn. The daemon interleaves folds
-    // between job passes — mirror that here, since the message job reads
-    // dev_runs to decide whether the task is idle.
     for (let i = 0; i < 6; i++) {
-      await duePolls();
-      await catchUpFold(sql, coreRegistry, devFold);
+      await pass();
     }
 
     const runs = await sql`
-      select run_uid, status, summary from dev_runs
+      select run_uid, status, summary, sandbox from dev_runs
       where task_uid = ${taskUid} and kind = 'feature'
       order by started_at`;
-    const interrupted = runs.find((r) => r["summary"] === "interrupted by the user");
-    expect(interrupted).toBeDefined();
-    expect(interrupted!["status"]).toBe("succeeded");
-    const last = runs[runs.length - 1]!;
-    expect(last["status"]).toBe("running"); // the resume turn is underway
+    expect(runs).toHaveLength(2);
+    expect(runs[0]!["summary"]).toBe("interrupted by the user");
+    expect(runs[0]!["status"]).toBe("succeeded");
+    const resumed = runs[1]!;
+    expect(resumed["status"]).toBe("running");
+    expect(resumed["sandbox"]).toBe(sessionBox.name); // same sandbox, resumed session
+    const resumedTurn = sessionBox.run(runDirFor(resumed["run_uid"]));
+    expect(resumedTurn.files["prompt.md"]).toContain("muted palette");
     const preamble = await sql`
       select content from dev_transcript_chunks
-      where run_uid = ${last["run_uid"]} and chunk_seq = 0`;
+      where run_uid = ${resumed["run_uid"]} and chunk_seq = 0`;
     expect(preamble[0]!["content"]).toContain("muted palette");
 
-    // Let the resume turn finish so later tests see an idle task.
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 20,
-    });
-    const lastStart = started[started.length - 1]!.payload as {
-      sandbox: string;
-      runUid: string;
-      branch: string;
-    };
-    const box = boxes.get(lastStart.sandbox)!;
-    const turn = box.run(runDirFor(lastStart.runUid));
-    turn.exitCode = 0;
-    turn.result = {
-      prNumber: 7,
-      prUrl: "https://github.com/me/repo/pull/7",
-      branch: lastStart.branch,
-      title: "Add a widget",
-    };
-    for (let i = 0; i < 4; i++) {
-      await duePolls();
-      await catchUpFold(sql, coreRegistry, devFold);
-    }
-    // Fully drained: later tests start from an idle queue.
-    expect(await duePolls()).toBe(0);
+    // Idle sessions are closed gracefully and can be reopened later.
+    resumedTurn.idleSeconds = 60 * 60;
+    await pass(); // poll notices idleness and EOFs the session
+    await pass(); // poll observes the exit and closes the run
+    await catchUpFold(sql, coreRegistry, devFold);
+    const closed = await sql`
+      select status, summary from dev_runs where run_uid = ${resumed["run_uid"]}`;
+    expect(closed[0]!["status"]).toBe("succeeded");
+    expect(closed[0]!["summary"]).toContain("session closed");
+    // Queue fully drained for later tests.
+    expect(await pass()).toBe(0);
   });
 
-  test("merge approval merges the PR and deploys", async () => {
+  test("merge approval merges the PR, deploys, and retires the session sandbox", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devmerge.requested",
@@ -394,26 +327,21 @@ describe("dev-agent flow", () => {
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devMerge]);
+    await catchUpFold(sql, coreRegistry, devFold);
 
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 10,
-    });
-    const mergeStart = started.find(
-      (e) => (e.payload as { kind: string }).kind === "merge",
-    )!;
-    const mergePayload = mergeStart.payload as { sandbox: string; runUid: string };
-    const featureSandbox = (started[0]!.payload as { sandbox: string }).sandbox;
-    const box = boxes.get(mergePayload.sandbox)!;
-    const turn = box.run(runDirFor(mergePayload.runUid));
-    expect(turn.env["DEV_PR_NUMBER"]).toBe("7");
-    expect(turn.env["FLY_DEPLOY_TOKEN_UI"]).toBe("fly-ui");
+    const mergeStart = await lastRunStarted();
+    const mergeBox = boxes.get(mergeStart.sandbox)!;
+    const mergeTurn = mergeBox.run(runDirFor(mergeStart.runUid));
+    expect(mergeTurn.env["DEV_PR_NUMBER"]).toBe("7");
+    expect(mergeTurn.env["FLY_DEPLOY_TOKEN_UI"]).toBe("fly-ui");
 
-    turn.log = "[nc] merged\n";
-    turn.exitCode = 0;
-    turn.result = { mergedSha: "abc123", deployed: ["personalbase-worker", "personalbase-ui"] };
-    expect(await duePolls()).toBe(1);
+    mergeTurn.log = "[nc] merged\n";
+    mergeTurn.exitCode = 0;
+    mergeTurn.result = {
+      mergedSha: "abc123",
+      deployed: ["personalbase-worker", "personalbase-ui"],
+    };
+    expect(await pass()).toBe(1);
 
     const merged = await readEvents(sql, coreRegistry, {
       afterSeq: 0n,
@@ -422,19 +350,15 @@ describe("dev-agent flow", () => {
     });
     expect(merged).toHaveLength(1);
     expect((merged[0]!.payload as { mergedSha: string }).mergedSha).toBe("abc123");
+    expect(mergeBox.destroyed).toBe(true);
+    expect(sessionBox.destroyed).toBe(true);
 
-    // Merge cleans up: its own sandbox and the task's conversation sandbox.
-    expect(box.destroyed).toBe(true);
-    expect(boxes.get(featureSandbox)!.destroyed).toBe(true);
-
-    await catchUpFold(sql, coreRegistry, devFold);
     const tasks = await sql`select status, preview_url from dev_tasks`;
     expect(tasks[0]!["status"]).toBe("merged");
-    // The sandbox died with the merge; the preview link dies with it.
     expect(tasks[0]!["preview_url"]).toBeNull();
   });
 
-  test("nonzero exit fails the run and keeps the sandbox", async () => {
+  test("a failed setup closes the run as failed and keeps the sandbox", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devtask.created",
@@ -445,31 +369,24 @@ describe("dev-agent flow", () => {
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 10,
-    });
-    const last = started[started.length - 1]!;
-    const lastPayload = last.payload as { sandbox: string; runUid: string };
-    const box = boxes.get(lastPayload.sandbox)!;
-    const turn = box.run(runDirFor(lastPayload.runUid));
+    const started = await lastRunStarted();
+    const box = boxes.get(started.sandbox)!;
+    const turn = box.run(runDirFor(started.runUid));
     turn.exitCode = 1;
-    turn.result = { error: "agent made no commits" };
-    expect(await duePolls()).toBe(1);
+    turn.result = { error: "clone failed" };
+    expect(await pass()).toBe(1);
     expect(box.destroyed).toBe(false);
 
-    await catchUpFold(sql, coreRegistry, devFold);
     const failed = await sql`
-      select status, error from dev_runs where sandbox = ${box.name}`;
+      select status, error from dev_runs where run_uid = ${started.runUid}`;
     expect(failed[0]!["status"]).toBe("failed");
-    expect(failed[0]!["error"]).toBe("agent made no commits");
+    expect(failed[0]!["error"]).toBe("clone failed");
     const tasks = await sql`
       select status from dev_tasks where title = 'Doomed task'`;
     expect(tasks[0]!["status"]).toBe("failed");
   });
 
-  test("archiving stops the turn, destroys the sandbox, and mutes messages", async () => {
+  test("archiving stops the session, destroys the sandbox, and mutes messages", async () => {
     await appendEvents(sql, coreRegistry, [
       {
         type: "user.devtask.created",
@@ -481,17 +398,8 @@ describe("dev-agent flow", () => {
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
     await catchUpFold(sql, coreRegistry, devFold);
-    const started = await readEvents(sql, coreRegistry, {
-      afterSeq: 0n,
-      patterns: ["dev.run.started"],
-      limit: 30,
-    });
-    const last = started[started.length - 1]!.payload as {
-      taskUid: string;
-      sandbox: string;
-      runUid: string;
-    };
-    const box = boxes.get(last.sandbox)!;
+    const started = await lastRunStarted();
+    const box = boxes.get(started.sandbox)!;
     expect(box.destroyed).toBe(false);
 
     await appendEvents(sql, coreRegistry, [
@@ -500,7 +408,7 @@ describe("dev-agent flow", () => {
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { taskUid: last.taskUid },
+        payload: { taskUid: started.taskUid },
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
@@ -508,10 +416,10 @@ describe("dev-agent flow", () => {
 
     expect(box.destroyed).toBe(true);
     const task = await sql`
-      select status from dev_tasks where task_uid = ${last.taskUid}`;
+      select status from dev_tasks where task_uid = ${started.taskUid}`;
     expect(task[0]!["status"]).toBe("archived");
     const run = await sql`
-      select status, summary from dev_runs where run_uid = ${last.runUid}`;
+      select status, summary from dev_runs where run_uid = ${started.runUid}`;
     expect(run[0]!["status"]).toBe("succeeded");
     expect(run[0]!["summary"]).toBe("archived by the user");
 
@@ -522,14 +430,13 @@ describe("dev-agent flow", () => {
         schemaVersion: 1,
         source: "ui:web",
         occurredAt: new Date().toISOString(),
-        payload: { taskUid: last.taskUid, message: "hello?", interrupt: false },
+        payload: { taskUid: started.taskUid, message: "hello?", interrupt: false },
       },
     ]);
     await catchUpEventReactors(sql, coreRegistry, [devAgent]);
-    await duePolls();
-    await catchUpFold(sql, coreRegistry, devFold);
+    await pass();
     const runs = await sql`
-      select count(*)::int as n from dev_runs where task_uid = ${last.taskUid}`;
+      select count(*)::int as n from dev_runs where task_uid = ${started.taskUid}`;
     expect(runs[0]!["n"]).toBe(1);
   });
 });

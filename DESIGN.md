@@ -470,10 +470,17 @@ Notes that matter:
 ### 10.2b Interactive tasks and live previews
 
 There is deliberately **one agent concept**: a task is a conversation, and what
-kind of task it is falls out of what you ask for. Turns that end with commits
-push and open/update the branch's PR; turns without commits just keep the
-conversation open — so "build X and PR it" and "start a dev server and iterate
-with me until I say ship it" are the same machinery with different instructions.
+kind of task it is falls out of what you ask for. A task runs as **one live
+Claude Code session** (`--input-format stream-json` over a named pipe in the
+sandbox): follow-up messages stream straight into the session's stdin in a
+couple of seconds, a turn-end hook inside the sandbox pushes commits and keeps
+the PR current after every completed turn, and the task page renders the whole
+thing as one continuous conversation. Interrupt kills the session process
+mid-turn (state persists up to the kill) and the message resumes the session in
+a fresh run; a session idle for 30 minutes is closed gracefully and any later
+message reopens it the same way. So "build X and PR it" and "start a dev server
+and iterate with me until I say ship it" are the same machinery with different
+instructions.
 
 For UI work the agent runs `nc-preview` in its sandbox: the app's dev server
 (vite + API) against a **read-only** database role, reached through the

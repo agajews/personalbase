@@ -3,9 +3,20 @@ import type { ReactorEvent, ReactorOutput } from "@nc/process";
 import type { SandboxPoll, SandboxProvider } from "./sandbox.js";
 
 const pollIntervalSeconds = 10;
+/** Polls tighten while the session is actively producing output. */
+const activePollIntervalSeconds = 3;
 const pollMaxBytes = 256 * 1024;
-/** ~2 hours of polls; past this the run is declared lost. */
-const maxPolls = 720;
+/** Sessions are long-lived; this is a runaway backstop, not a turn limit. */
+const maxPolls = 20_000;
+/** A session quiet this long is closed gracefully; a message reopens it. */
+const idleCloseSeconds = 30 * 60;
+
+const prJsonSchema = z.object({
+  prNumber: z.number().int().positive(),
+  prUrl: z.string().min(1),
+  branch: z.string().min(1),
+  title: z.string(),
+});
 
 export const devPollPayload = z.object({
   step: z.literal("poll"),
@@ -21,6 +32,8 @@ export const devPollPayload = z.object({
   polls: z.number().int().nonnegative(),
   /** Set once the preview event has been emitted, so it fires exactly once. */
   previewSeen: z.boolean().default(false),
+  /** PR numbers already announced for this task (session emits mid-run). */
+  prSeen: z.array(z.number().int()).default([]),
 });
 export type DevPollPayload = z.infer<typeof devPollPayload>;
 
@@ -131,6 +144,7 @@ export async function launchRun(
     chunkSeq: preambleEvents.length,
     polls: 0,
     previewSeen: false,
+    prSeen: [],
   };
   return {
     events: [
@@ -212,6 +226,28 @@ export async function pollRun(
       // service registration hiccup; retried next poll
     }
   }
+  // The session's turn-end hook records the branch's PR in pr.json; announce
+  // each PR number once per task (sessions emit mid-run, not at exit).
+  const prSeen = [...payload.prSeen];
+  const prParsed = prJsonSchema.safeParse(poll.pr);
+  if (prParsed.success && !prSeen.includes(prParsed.data.prNumber)) {
+    events.push({
+      type: "dev.pr.opened",
+      schemaVersion: 1,
+      occurredAt: new Date().toISOString(),
+      causedByUid: payload.taskUid,
+      idempotencyKey: `dev:${payload.taskUid}:pr:${prParsed.data.prNumber}`,
+      payload: {
+        taskUid: payload.taskUid,
+        runUid: payload.runUid,
+        prNumber: prParsed.data.prNumber,
+        prUrl: prParsed.data.prUrl,
+        branch: prParsed.data.branch,
+        title: prParsed.data.title,
+      },
+    });
+    prSeen.push(prParsed.data.prNumber);
+  }
   let consumedBytes = 0;
   if (poll.content !== "") {
     // Cut at the last newline so stream-json lines stay whole across chunks
@@ -272,6 +308,17 @@ export async function pollRun(
     };
   }
 
+  // A session quiet for too long is closed gracefully (EOF on its stdin);
+  // the wrapper records the exit and the next poll finishes the run. Sending
+  // a message later starts a fresh run that resumes the same session.
+  if (poll.idleSeconds > idleCloseSeconds) {
+    try {
+      await sandbox.endSession(runDirFor(payload.runUid));
+    } catch {
+      // best effort; the idle check fires again next poll
+    }
+  }
+
   return {
     events,
     followUps: [
@@ -283,8 +330,12 @@ export async function pollRun(
           chunkSeq: consumedBytes > 0 ? payload.chunkSeq + 1 : payload.chunkSeq,
           polls: payload.polls + 1,
           previewSeen,
+          prSeen,
         },
-        runAfterSeconds: pollIntervalSeconds,
+        // Tighten the cadence while output is flowing so the conversation
+        // feels live; back off when the session is quiet.
+        runAfterSeconds:
+          consumedBytes > 0 ? activePollIntervalSeconds : pollIntervalSeconds,
         dedupeKey: `dev:${payload.runUid}:poll:${payload.polls + 2}`,
       },
     ],

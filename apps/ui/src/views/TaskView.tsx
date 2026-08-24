@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DevRun, type DevTaskPage } from "../api.js";
-import { ago, cmdEnter, runDuration } from "../ui.js";
+import { cmdEnter, runDuration } from "../ui.js";
 import { DevStatusChip } from "./AgentsView.js";
 
 interface TranscriptLine {
@@ -117,7 +117,6 @@ function Transcript({ run }: { run: DevRun }) {
 
 export function TaskView({ uid }: { uid: string }) {
   const [page, setPage] = useState<DevTaskPage | null>(null);
-  const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSpec, setShowSpec] = useState(false);
   const [message, setMessage] = useState("");
@@ -152,8 +151,24 @@ export function TaskView({ uid }: { uid: string }) {
   if (page === null) {
     return <div className="empty">{error ?? "loading…"}</div>;
   }
-  const run =
-    page.runs.find((r) => r.runUid === selectedRun) ?? page.runs[page.runs.length - 1] ?? null;
+  // One continuous conversation: every run (Claude session segments plus any
+  // merge runs) and every user message, interleaved chronologically.
+  const conversation: (
+    | { kind: "run"; at: number; run: DevRun }
+    | { kind: "message"; at: number; msgUid: string; text: string }
+  )[] = [
+    ...page.runs.map((r) => ({
+      kind: "run" as const,
+      at: new Date(r.startedAt).getTime(),
+      run: r,
+    })),
+    ...page.messages.map((m) => ({
+      kind: "message" as const,
+      at: new Date(m.at).getTime(),
+      msgUid: m.msgUid,
+      text: m.message,
+    })),
+  ].sort((a, b) => a.at - b.at);
   const featurePr = [...page.runs].reverse().find((r) => r.prNumber !== null);
   const mergeable = page.task.status === "pr_open" && featurePr?.prNumber != null;
 
@@ -170,14 +185,6 @@ export function TaskView({ uid }: { uid: string }) {
   // The agent's session survives between turns, so the conversation is open
   // whenever the task hasn't merged.
   const conversable = ["running", "pr_open", "failed"].includes(page.task.status);
-  // Messages newer than the latest turn haven't been picked up yet: show them
-  // as queued so a sent message is never invisibly in limbo.
-  const latestFeatureStart = page.runs
-    .filter((r) => r.kind === "feature")
-    .reduce((max, r) => Math.max(max, new Date(r.startedAt).getTime()), 0);
-  const queued = page.messages.filter(
-    (m) => new Date(m.at).getTime() > latestFeatureStart,
-  );
   const turnActive = page.runs.some((r) => r.status === "running");
   const send = async (interrupt: boolean) => {
     if (message.trim() === "") return;
@@ -187,8 +194,8 @@ export function TaskView({ uid }: { uid: string }) {
         interrupt
           ? "sent — interrupting the current turn"
           : turnActive
-            ? "sent — the agent picks this up when its current turn finishes"
-            : "sent — a new turn starts within seconds",
+            ? "sent — streaming into the live session"
+            : "sent — reopening the session",
       );
       setMessage("");
       setError(null);
@@ -244,48 +251,33 @@ export function TaskView({ uid }: { uid: string }) {
       </div>
       {showSpec && <pre className="task-spec">{page.task.spec}</pre>}
       {error !== null && <div className="error">{error}</div>}
-      {page.runs.length > 1 && (
-        <div className="task-runs">
-          {page.runs.map((r) => (
-            <button
-              key={r.runUid}
-              className={`run-tab ${run?.runUid === r.runUid ? "active" : ""}`}
-              onClick={() => setSelectedRun(r.runUid)}
-            >
-              {r.kind} · {r.status} · {ago(r.startedAt)}
-            </button>
-          ))}
-        </div>
+      {conversation.length === 0 && (
+        <div className="empty">No runs yet — the worker picks this up within seconds.</div>
       )}
-      {run !== null && (
-        <>
-          <div className="run-facts">
-            <span>
-              {run.kind} run in <code>{run.sandbox}</code>
-            </span>
-            <span title={run.finishedAt === null ? "running for" : "run took"}>
-              {runDuration(run.startedAt, run.finishedAt)}
-            </span>
-            {run.branch !== null && <code>{run.branch}</code>}
-            {run.error !== null && <span className="dev-task-error">{run.error}</span>}
-            {run.summary !== null && <span>{run.summary}</span>}
+      {conversation.map((item) =>
+        item.kind === "message" ? (
+          <div key={item.msgUid} className="dev-user-msg">
+            <span className="dev-queued-label">you</span>
+            <span>{item.text}</span>
           </div>
-          <Transcript run={run} />
-        </>
-      )}
-      {run === null && <div className="empty">No runs yet — the worker picks this up within seconds.</div>}
-      {queued.length > 0 && (
-        <div className="dev-queued">
-          {queued.map((m) => (
-            <div key={m.msgUid} className="dev-queued-msg">
-              <span className="dev-queued-label">queued {ago(m.at)}</span>
-              <span>{m.message}</span>
+        ) : (
+          <div key={item.run.runUid} className="conversation-run">
+            <div className="run-facts">
+              <span>
+                {item.run.kind === "merge" ? "merge run" : "session"} in{" "}
+                <code>{item.run.sandbox}</code>
+              </span>
+              <span title={item.run.finishedAt === null ? "running for" : "took"}>
+                {runDuration(item.run.startedAt, item.run.finishedAt)}
+              </span>
+              {item.run.error !== null && (
+                <span className="dev-task-error">{item.run.error}</span>
+              )}
+              {item.run.summary !== null && <span>{item.run.summary}</span>}
             </div>
-          ))}
-          <div className="dev-composer-hint">
-            The agent picks these up when its current turn finishes.
+            <Transcript run={item.run} />
           </div>
-        </div>
+        ),
       )}
       {conversable && (
         <div className="dev-composer">
@@ -301,7 +293,7 @@ export function TaskView({ uid }: { uid: string }) {
           />
           <div className="dev-composer-row">
             <button onClick={() => void send(false)} disabled={message.trim() === ""}>
-              {turnActive ? "Queue for agent" : "Send to agent"}
+              Send to agent
             </button>
             {turnActive && (
               <button

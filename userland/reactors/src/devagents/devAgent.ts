@@ -16,15 +16,12 @@ import {
   featureRunScript,
   featureSpec,
   previewScript,
+  turnEndScript,
   type DevConfig,
 } from "./scripts.js";
 
-const resultSchema = z.object({
-  prNumber: z.number().int().positive(),
-  prUrl: z.string().min(1),
-  branch: z.string().min(1),
-  title: z.string(),
-});
+/** Written by the run wrapper when the live session ends. */
+const sessionResultSchema = z.object({ sessionEnded: z.literal(true) });
 
 /** A queued follow-up message waiting for the task's current turn to finish. */
 const devMessagePayload = z.object({
@@ -60,37 +57,15 @@ changes; the harness pushes the branch and updates the PR when you finish. \
 Update /nc/pr.md if the scope of the change has shifted.)`;
 }
 
-function prEvents(
-  payload: { taskUid: string; runUid: string },
-  result: unknown,
-): { events: ReactorEvent[]; summary: string | null } {
-  const parsed = resultSchema.safeParse(result);
-  if (!parsed.success) {
-    const pending =
-      typeof result === "object" && result !== null && "pending" in result;
-    return {
-      events: [],
-      summary: pending
-        ? "iterating — no commits yet, conversation open"
-        : "turn succeeded but wrote no PR result",
-    };
-  }
-  const pr: ReactorEvent = {
-    type: "dev.pr.opened",
-    schemaVersion: 1,
-    occurredAt: new Date().toISOString(),
-    causedByUid: payload.taskUid,
-    idempotencyKey: `dev:${payload.runUid}:pr`,
-    payload: {
-      taskUid: payload.taskUid,
-      runUid: payload.runUid,
-      prNumber: parsed.data.prNumber,
-      prUrl: parsed.data.prUrl,
-      branch: parsed.data.branch,
-      title: parsed.data.title,
-    },
+/** PR announcements happen mid-session (the poller watches pr.json); a
+ * session's exit only needs a human-readable closing summary. */
+function sessionExit(result: unknown): { events: ReactorEvent[]; summary: string | null } {
+  return {
+    events: [],
+    summary: sessionResultSchema.safeParse(result).success
+      ? "session closed — sending a message reopens it"
+      : "session ended",
   };
-  return { events: [pr], summary: `PR #${parsed.data.prNumber} ready` };
 }
 
 /**
@@ -162,6 +137,7 @@ export function makeDevAgentReactor(
             }),
             "finish.mjs": featureFinishScript,
             "preview.sh": previewScript,
+            "turn-end.sh": turnEndScript,
           },
           env: {
             DEV_REPO: cfg.repo,
@@ -232,16 +208,10 @@ export function makeDevAgentReactor(
 
       const payload = jobPayload.parse(input.payload);
       if (payload.step === "poll") {
-        return pollRun(
-          provider,
-          "dev-agent",
-          payload,
-          (result) => prEvents(payload, result),
-          {
-            destroySandboxOnSuccess: false,
-            previewDatabaseUrl: config().previewDatabaseUrl,
-          },
-        );
+        return pollRun(provider, "dev-agent", payload, sessionExit, {
+          destroySandboxOnSuccess: false,
+          previewDatabaseUrl: config().previewDatabaseUrl,
+        });
       }
 
       // A follow-up message: wait until no turn is running, then resume the
@@ -264,10 +234,24 @@ export function makeDevAgentReactor(
         return []; // no turn ever launched (config failure); nothing to resume
       }
       const running = runs.find((r) => r["status"] === "running");
+      if (running !== undefined && !payload.interrupt) {
+        // The session is live: stream the message straight into its stdin.
+        // If the pipe is gone (session died but the run row hasn't caught
+        // up), fall through to the wait chain, which resumes via a new run.
+        try {
+          await provider
+            .open(running["sandbox"])
+            .sendMessage(runDirFor(running["run_uid"]), payload.message);
+          return [];
+        } catch {
+          // fall through to waiting
+        }
+      }
       if (running !== undefined) {
         if (payload.interrupt) {
-          // Stop the turn mid-flight (idempotent); the poll chain closes the
-          // run as interrupted within seconds and the wait below picks up.
+          // Kill the live session mid-turn (idempotent); the poll chain
+          // closes the run as interrupted within seconds and the wait below
+          // resumes the Claude session in a fresh run with this message.
           await provider.open(running["sandbox"]).interrupt(runDirFor(running["run_uid"]));
         }
         if (payload.waits + 1 >= maxMessageWaits) {
@@ -300,6 +284,7 @@ export function makeDevAgentReactor(
           "prompt.md": followUpPrompt(payload.message),
           "finish.mjs": featureFinishScript,
           "preview.sh": previewScript,
+          "turn-end.sh": turnEndScript,
         },
         env: {
           DEV_REPO: cfg.repo,

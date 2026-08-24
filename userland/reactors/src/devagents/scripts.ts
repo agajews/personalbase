@@ -56,16 +56,20 @@ ${args.spec}
 
 # House rules
 
+- This is a live conversation: the user may send follow-ups at any time, and they \
+arrive as new messages in this same session. Reply to them directly.
 - Read DESIGN.md and the surrounding code first; match the existing style exactly.
-- Do NOT push and do NOT open a PR yourself — when your turn ends, the harness \
-pushes any commits on your branch and opens (or updates) the PR. A turn with no \
-commits simply continues the conversation, so for interactive work keep iterating \
-with the user and commit when the change is ready for review (or when they ask).
+- Do NOT push and do NOT open a PR yourself — after each of your turns, the \
+harness pushes any commits on your branch and opens (or updates) the PR. Commit \
+when a change is ready for review (or when the user asks); until then keep \
+iterating.
 - For UI work, run \`nc-preview\` (already on PATH) to start a live dev server \
 against a read-only copy of production data — a private preview link appears on \
 the user's task page automatically. Vite hot-reloads your edits; rerun nc-preview \
-only after dependency or server-code changes.
-- Before a turn that should produce the PR, write /nc/pr.md: first line is the PR \
+only after dependency or server-code changes. To verify visually yourself, you \
+may install a browser (\`npx playwright install chromium\`) and screenshot \
+http://127.0.0.1:5173.
+- Before committing work that should land, write /nc/pr.md: first line is the PR \
 title, the rest is the PR description (what changed, how you verified it).
 - Run \`pnpm typecheck\` and fix any failures before finishing a turn with commits.
 - Database-backed tests are unavailable in this sandbox; do not block on them, but \
@@ -115,32 +119,68 @@ if ! command -v claude > /dev/null 2>&1; then
   npm install -g @anthropic-ai/claude-code > "$NC_RUN_DIR/claude-install.log" 2>&1 \
     || { tail -20 "$NC_RUN_DIR/claude-install.log"; fail "claude code install failed"; }
 fi
-# Resume iff the session exists on disk (robust to a turn interrupted before
-# the session was created).
-SESSION_FILE=$(ls "$HOME"/.claude/projects/*/"$DEV_SESSION_ID".jsonl 2>/dev/null | head -1)
-if [ -n "$SESSION_FILE" ]; then
-  echo "[nc] starting claude (resuming session)"
-  claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --resume "$DEV_SESSION_ID" \
-    --output-format stream-json --verbose --dangerously-skip-permissions
+# One live Claude session per run: stream-json over a named pipe. The writer
+# subshell delivers the initial prompt, then execs into a sleeper that holds
+# the pipe open — killing it (holder.pid) EOFs stdin and the session ends
+# gracefully. Follow-ups are streamed into the pipe by the harness.
+rm -f "$NC_RUN_DIR/input"
+mkfifo "$NC_RUN_DIR/input"
+(
+  node -e 'const fs = require("node:fs");
+const text = fs.readFileSync(process.env.NC_RUN_DIR + "/prompt.md", "utf8");
+process.stdout.write(JSON.stringify({
+  type: "user", message: { role: "user", content: [{ type: "text", text }] },
+}) + "\\n");'
+  exec sleep 2147483647
+) > "$NC_RUN_DIR/input" &
+echo $! > "$NC_RUN_DIR/holder.pid"
+
+# --resume FORKS the transcript under a fresh session id, so /nc/session-id
+# always tracks the latest fork; the wrapper captures it from the stream the
+# moment it appears (so even an interrupted run's id survives).
+LAST_SESSION=$(cat /nc/session-id 2>/dev/null)
+if [ -n "$LAST_SESSION" ]; then
+  echo "[nc] starting claude session (resuming $LAST_SESSION)"
+  RESUME_ARGS=(--resume "$LAST_SESSION")
 else
-  echo "[nc] starting claude (new session)"
-  claude -p "$(cat "$NC_RUN_DIR/prompt.md")" --session-id "$DEV_SESSION_ID" \
-    --output-format stream-json --verbose --dangerously-skip-permissions
+  echo "[nc] starting claude session (new)"
+  RESUME_ARGS=(--session-id "$DEV_SESSION_ID")
 fi
-CLAUDE_EXIT=$?
-echo "[nc] claude exited with $CLAUDE_EXIT"
-cd /nc/repo
-if [ -z "$(git log "origin/$DEV_TRUNK..HEAD" --oneline)" ]; then
-  echo "[nc] no commits yet — conversation stays open"
-  echo '{"pending":true}' > "$NC_RUN_DIR/result.json"
-  exit 0
+claude -p --input-format stream-json --output-format stream-json --verbose \
+  --dangerously-skip-permissions "\${RESUME_ARGS[@]}" < "$NC_RUN_DIR/input" | \
+  while IFS= read -r line; do
+    printf '%s\\n' "$line"
+    if [ ! -f "$NC_RUN_DIR/sid-captured" ]; then
+      SID=$(printf '%s' "$line" | grep -o '"session_id":"[0-9a-f-]*"' | head -1 | cut -d'"' -f4)
+      if [ -n "$SID" ]; then
+        printf '%s' "$SID" > /nc/session-id
+        touch "$NC_RUN_DIR/sid-captured"
+      fi
+    fi
+    case "$line" in
+      '{"type":"result"'*) bash "$NC_RUN_DIR/turn-end.sh" 2>&1 ;;
+    esac
+  done
+CLAUDE_EXIT=\${PIPESTATUS[0]}
+echo "[nc] session ended with $CLAUDE_EXIT"
+bash "$NC_RUN_DIR/turn-end.sh" 2>&1
+echo '{"sessionEnded":true}' > "$NC_RUN_DIR/result.json"
+exit 0
+`;
+
+/**
+ * Runs after every completed turn (and at session end): publish whatever the
+ * agent has committed and keep the branch's PR current. finish.mjs records
+ * the PR in <runDir>/pr.json, which the poller watches.
+ */
+export const turnEndScript = `#!/usr/bin/env bash
+export PATH="/nc/bin:$HOME/.local/bin:$PATH"
+cd /nc/repo 2>/dev/null || exit 0
+if [ -n "$(git log "origin/$DEV_TRUNK..HEAD" --oneline 2>/dev/null)" ]; then
+  echo "[nc] pushing $DEV_BRANCH"
+  git push -q origin "$DEV_BRANCH" 2>&1 || echo "[nc] push failed"
+  node "$NC_RUN_DIR/finish.mjs" || echo "[nc] PR ensure failed"
 fi
-git add -A > /dev/null 2>&1 && git commit -qm "Dev agent: remaining working-tree changes" > /dev/null 2>&1
-echo "[nc] pushing $DEV_BRANCH"
-git push -q origin "$DEV_BRANCH" || fail "push failed"
-echo "[nc] ensuring pull request"
-node "$NC_RUN_DIR/finish.mjs" || fail "PR creation failed"
-echo "[nc] done"
 exit 0
 `;
 
@@ -168,7 +208,7 @@ body += "\\n\\n🤖 Opened by the personalbase dev agent.";
 
 const finish = (data) => {
   writeFileSync(
-    \`\${runDir}/result.json\`,
+    \`\${runDir}/pr.json\`,
     JSON.stringify({ prNumber: data.number, prUrl: data.html_url, branch, title: data.title }),
   );
   console.log("[nc] PR ready:", data.html_url);
