@@ -234,6 +234,20 @@ export const agentChatRepliedV1 = z.object({
 });
 export type AgentChatReplied = z.infer<typeof agentChatRepliedV1>;
 
+/**
+ * The day's resurfacing: which saved items were brought back for another
+ * look. A fact, not a recomputation — the timeline shows what was actually
+ * surfaced each day, and future surfaced kinds (repetition cards, memos,
+ * reading blocks) ride the same rails.
+ */
+export const surfaceDayResurfacedV1 = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  items: z
+    .array(z.object({ kind: z.string().min(1), ref: z.string().min(1) }))
+    .min(1),
+});
+export type SurfaceDayResurfaced = z.infer<typeof surfaceDayResurfacedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -264,4 +278,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "agent.taxonomy.proposed", versions: [{ schema: agentTaxonomyProposedV1 }] },
   { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
   { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
+  { type: "surface.day.resurfaced", versions: [{ schema: surfaceDayResurfacedV1 }] },
 ]);

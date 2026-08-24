@@ -11,20 +11,6 @@ import {
   MarkButtons,
 } from "../ui.js";
 
-function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
-  const groups: [string, FeedItem[]][] = [];
-  for (const item of items) {
-    const day = new Date(item.publishedAt).toISOString().slice(0, 10);
-    const last = groups[groups.length - 1];
-    if (last !== undefined && last[0] === day) {
-      last[1].push(item);
-    } else {
-      groups.push([day, [item]]);
-    }
-  }
-  return groups;
-}
-
 function FeedRow({
   item,
   hueFor,
@@ -105,10 +91,7 @@ function FeedRow({
 }
 
 // ---- resurfacing ----
-// A shelf of older saved papers under the feed. The server draws a sample
-// seeded with today's date; we reveal it a few rows at a time.
-const SAMPLE_SIZE = 25;
-const REVEAL_STEP = 5;
+// Recorded daily samples from the saved library, one block per timeline day.
 
 function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () => void }) {
   return (
@@ -148,45 +131,43 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
       <AuthorsLine authors={item.authors} />
       {item.abstract !== null && <p className="verdict-abstract">{item.abstract}</p>}
       <p className="verdict-actions">
-        <MarkButtons entityId={item.entityId} mark="saved" onChanged={onMarked} />
+        <MarkButtons entityId={item.entityId} mark={item.mark} onChanged={onMarked} />
         <CategoryChips categories={item.categories} />
       </p>
     </details>
   );
 }
 
-function ResurfacedSection() {
-  const { data: sample, refresh } = useCached("resurfaced", () => api.resurfaced(SAMPLE_SIZE));
-  const [shown, setShown] = useState(REVEAL_STEP);
+const revealStep = 5;
 
-  if (sample === null || sample.items.length === 0) {
-    return null;
-  }
-  const visible = sample.items.slice(0, shown);
+/** A day's resurfacing block, revealed a few rows at a time. */
+function ResurfacedBlock({
+  items,
+  onMarked,
+}: {
+  items: ResurfacedItem[];
+  onMarked: () => void;
+}) {
+  const [shown, setShown] = useState(revealStep);
+  const visible = items.slice(0, shown);
   return (
-    <div className="resurfaced">
-      <div className="feed-date">Resurfaced</div>
-      <div className="results-head">
-        <span className="results-count">
-          {visible.length} of {sample.items.length}
-        </span>
-        <span className="dot">·</span>
-        <span>drawn from {sample.total} saved, reshuffled daily</span>
-      </div>
+    <>
+      <div className="timeline-kind">resurfaced</div>
       {visible.map((item) => (
-        <ResurfacedRow key={item.entityId} item={item} onMarked={refresh} />
+        <ResurfacedRow key={item.entityId} item={item} onMarked={onMarked} />
       ))}
-      {visible.length < sample.items.length && (
-        <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + REVEAL_STEP)}>
-          show {Math.min(REVEAL_STEP, sample.items.length - visible.length)} more
+      {visible.length < items.length && (
+        <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + revealStep)}>
+          show {Math.min(revealStep, items.length - visible.length)} more
         </button>
       )}
-    </div>
+    </>
   );
 }
 
 export function FeedView({ filters }: { filters: FilterSummary[] }) {
-  const { data: feed, refresh } = useCached("feed", () => api.feed(3));
+  const [days, setDays] = useState(3);
+  const { data: feed, refresh } = useCached(`feed:${days}`, () => api.feed(days));
   useEffect(() => {
     const timer = setInterval(refresh, 10_000);
     return () => clearInterval(timer);
@@ -195,31 +176,71 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
   const hueFor = (name: string) =>
     hashHue(filters.find((f) => f.name === name)?.promptHash ?? "000000");
 
+  // One timeline: fresh papers (by publication day) and each day's recorded
+  // resurfacing merge into day sections, newest first. Future surfaced kinds
+  // (repetition cards, memos, reading blocks) join the same merge.
+  interface DaySection {
+    day: string;
+    fresh: FeedItem[];
+    resurfaced: ResurfacedItem[];
+  }
+  const sections = new Map<string, DaySection>();
+  const section = (day: string): DaySection => {
+    const existing = sections.get(day);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created: DaySection = { day, fresh: [], resurfaced: [] };
+    sections.set(day, created);
+    return created;
+  };
+  if (feed !== null) {
+    for (const group of feed.resurfaced) {
+      section(group.day).resurfaced.push(...group.items);
+    }
+    for (const item of feed.items) {
+      section(new Date(item.publishedAt).toISOString().slice(0, 10)).fresh.push(item);
+    }
+  }
+  const ordered = [...sections.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
+
   return (
-    <section className="results">
-      <ResurfacedSection />
+    <section className="results timeline">
       <div className="results-head">
         <span className="results-count">
           {feed === null ? "loading…" : `${feed.items.length} surfaced`}
         </span>
         <span className="dot">·</span>
-        <span>filter matches and lab publications, last {feed?.days ?? 3} days</span>
+        <span>
+          new papers and resurfacings from {feed?.savedTotal ?? "…"} saved · last {days} days
+        </span>
       </div>
-      {feed !== null && feed.items.length === 0 && (
+      {feed !== null && ordered.length === 0 && (
         <div className="empty">
-          Nothing surfaced in this window yet — ingest papers and judge a filter, or wait for
-          the daily sweeps.
+          Nothing on the timeline yet — the daily sweeps and resurfacer fill it in.
         </div>
       )}
-      {feed !== null &&
-        groupByPublicationDay(feed.items).map(([day, items]) => (
-          <div key={day}>
-            <div className="feed-date">{formatDay(day)}</div>
-            {items.map((item) => (
-              <FeedRow key={item.arxivId} item={item} hueFor={hueFor} onMarked={refresh} />
-            ))}
-          </div>
-        ))}
+      {ordered.map(({ day, fresh, resurfaced }) => (
+        <div key={day} className="timeline-day">
+          <div className="feed-date timeline-date">{formatDay(day)}</div>
+          {resurfaced.length > 0 && (
+            <ResurfacedBlock key={`r-${day}`} items={resurfaced} onMarked={refresh} />
+          )}
+          {fresh.length > 0 && (
+            <>
+              {resurfaced.length > 0 && <div className="timeline-kind">new papers</div>}
+              {fresh.map((item) => (
+                <FeedRow key={item.arxivId} item={item} hueFor={hueFor} onMarked={refresh} />
+              ))}
+            </>
+          )}
+        </div>
+      ))}
+      {feed !== null && (
+        <button className="ghost load-more" onClick={() => setDays((d) => d + 7)}>
+          show earlier days
+        </button>
+      )}
     </section>
   );
 }

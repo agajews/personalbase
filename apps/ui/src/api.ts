@@ -98,9 +98,13 @@ export interface FeedItem {
 export interface Feed {
   days: number;
   items: FeedItem[];
+  /** Saved items in the library the daily samples draw from. */
+  savedTotal: number;
+  /** Per-day resurfacing history within the window, newest day first. */
+  resurfaced: ResurfacedDay[];
 }
 
-/** One paper from the daily resurfacing sample over the saved library. */
+/** One item from a day's recorded resurfacing over the saved library. */
 export interface ResurfacedItem {
   entityId: string;
   kind: string;
@@ -111,14 +115,12 @@ export interface ResurfacedItem {
   arxivId: string | null;
   journal: string | null;
   year: number | null;
-  markedAt: string;
+  markedAt: string | null;
+  mark: Mark | null;
 }
 
-export interface Resurfaced {
-  /** The UTC day the sample is seeded with; it reshuffles when this rolls over. */
+export interface ResurfacedDay {
   day: string;
-  /** Saved items in the library the sample was drawn from. */
-  total: number;
   items: ResurfacedItem[];
 }
 
@@ -316,8 +318,6 @@ function post(path: string, body: unknown): Promise<unknown> {
 export const api = {
   state: (): Promise<AppState> => request("/api/state"),
   feed: (days: number): Promise<Feed> => request(`/api/feed?days=${days}`),
-  resurfaced: (limit: number): Promise<Resurfaced> =>
-    request(`/api/today/resurfaced?limit=${limit}`),
   results: (name: string): Promise<Results> =>
     request(`/api/results/${encodeURIComponent(name)}`),
   entity: (id: string): Promise<EntityPage> =>
