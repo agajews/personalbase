@@ -74,7 +74,7 @@ export function AgentsView() {
       {tasks === null && <div className="empty">loading…</div>}
       {tasks !== null && tasks.length === 0 && <div className="empty">No tasks yet.</div>}
       {tasks !== null &&
-        tasks.filter((t) => t.status !== "archived").map((t) => (
+        tasks.filter((t) => t.status !== "archived" && t.status !== "merged").map((t) => (
           <button
             key={t.taskUid}
             className="dev-task-row"
@@ -98,6 +98,29 @@ export function AgentsView() {
             </span>
           </button>
         ))}
+      {tasks !== null && tasks.some((t) => t.status === "merged") && (
+        <details className="dev-archived">
+          <summary>
+            Merged ({tasks.filter((t) => t.status === "merged").length})
+          </summary>
+          {tasks
+            .filter((t) => t.status === "merged")
+            .map((t) => (
+              <button
+                key={t.taskUid}
+                className="dev-task-row"
+                onClick={() => navTo(`/task/${t.taskUid}`)}
+              >
+                <DevStatusChip status={t.status} />
+                <span className="dev-task-title">{t.title}</span>
+                <span className="dev-task-meta">
+                  {t.latestRun?.summary != null && <span>{t.latestRun.summary}</span>}
+                  <span>{ago(t.createdAt)}</span>
+                </span>
+              </button>
+            ))}
+        </details>
+      )}
       {tasks !== null && tasks.some((t) => t.status === "archived") && (
         <details className="dev-archived">
           <summary>
