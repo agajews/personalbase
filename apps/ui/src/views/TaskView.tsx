@@ -13,10 +13,10 @@ function renderLines(raw: string): TranscriptLine[] {
   const line = raw.trim();
   if (line === "") return [];
   if (!line.startsWith("{")) {
-    // A stream-json line larger than one poll chunk arrives split: the tail
-    // fragments are binary-ish JSON innards (file Read outputs, base64…),
-    // not log lines. Real log lines are short.
-    if (line.length > 400) return [];
+    // Real log lines are short script echoes or stray tool errors. Anything
+    // long or JSON-shaped is a fragment of a stream-json frame that was
+    // split across poll chunks (file Read bytes, thinking tails, …) — drop.
+    if (line.length > 300 || line.includes('":')) return [];
     return [{ kind: "plain", text: line }];
   }
   try {
@@ -38,6 +38,9 @@ function renderLines(raw: string): TranscriptLine[] {
         name?: string;
         input?: unknown;
       }[]) {
+        // "thinking" / "redacted_thinking" blocks are deliberately hidden —
+        // the conversation shows what the agent says and does, not its
+        // scratchpad.
         if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
           parts.push({ kind: "text", text: block.text.trim() });
         }
