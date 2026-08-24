@@ -991,6 +991,14 @@ button.mark.on {
   color: var(--muted);
 }
 
+/* Affiliations lead the page: one horizontal row of chips under the title. */
+.entity-affiliations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
 .entity-idents {
   font-family: var(--mono);
   font-size: 11.5px;

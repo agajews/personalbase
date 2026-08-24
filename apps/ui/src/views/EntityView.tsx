@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, type EntityLink } from "../api.js";
 import { useCached } from "../cache.js";
-import { ago, MarkButtons } from "../ui.js";
+import { ago, EntityChip, MarkButtons } from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -81,6 +81,11 @@ export function EntityView({ id }: { id: string }) {
       return true;
     });
   };
+  // A paper's affiliations are context you want before the abstract, not a
+  // link group at the foot of the page — they ride up top as a chip row.
+  const linksOut = dedupedLinks(page.linksOut);
+  const affiliations = linksOut.filter((l) => l.linkType === "affiliated_org");
+  const otherLinksOut = linksOut.filter((l) => l.linkType !== "affiliated_org");
 
   return (
     <div className="entity-page">
@@ -91,6 +96,18 @@ export function EntityView({ id }: { id: string }) {
           <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
         )}
       </div>
+      {affiliations.length > 0 && (
+        <p className="entity-affiliations">
+          {affiliations.map((l) => (
+            <EntityChip
+              key={l.other.entityId}
+              entityId={l.other.entityId}
+              name={l.other.displayName ?? l.other.entityId}
+              className="org-chip"
+            />
+          ))}
+        </p>
+      )}
       {page.identifiers.length > 0 && (
         <p className="entity-idents">
           {page.identifiers.map((i) => (
@@ -156,7 +173,7 @@ export function EntityView({ id }: { id: string }) {
         </section>
       )}
 
-      {groupLinks(dedupedLinks(page.linksOut), "out").map(([label, links]) => (
+      {groupLinks(otherLinksOut, "out").map(([label, links]) => (
         <LinkGroup key={`out-${label}`} title={label} links={links} />
       ))}
       {groupLinks(dedupedLinks(page.linksIn), "in").map(([label, links]) => (
