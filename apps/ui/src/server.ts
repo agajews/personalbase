@@ -342,6 +342,56 @@ app.get("/api/feed", async (c) => {
   return c.json({ days, items });
 });
 
+// The Today view's second shelf: a slice of the saved library, reshuffled
+// once a day. md5(entity_id || day) is a deterministic shuffle — the same
+// order for every request on that UTC day, a different one tomorrow — so a
+// reload shows the same papers and asking for more rows extends the sample
+// instead of re-drawing it.
+app.get("/api/today/resurfaced", async (c) => {
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? 25)));
+  const day = new Date().toISOString().slice(0, 10);
+  const totalRows = await sql`select count(*)::int as n from paper_marks where mark = 'saved'`;
+  // Marks live on entities, so the library's Paperpile-backed items count too
+  // (lateral: one entity can carry several Paperpile rows).
+  const rows = await sql`
+    select m.entity_id, m.marked_at, e.kind,
+           coalesce(p.title, li.title, e.display_name) as title,
+           coalesce(p.abstract, li.abstract) as abstract,
+           coalesce(p.authors, li.authors, '[]'::jsonb) as authors,
+           coalesce(p.categories, '[]'::jsonb) as categories,
+           coalesce(p.arxiv_id, li.arxiv_id) as arxiv_id,
+           li.year, li.journal
+    from paper_marks m
+    join entities e on e.entity_id = m.entity_id
+    left join papers p on p.entity_id = m.entity_id
+    left join lateral (
+      select title, abstract, authors, year, journal, arxiv_id
+      from library_items where entity_id = m.entity_id order by added_at limit 1
+    ) li on true
+    where m.mark = 'saved'
+    order by md5(m.entity_id::text || ${day})
+    limit ${limit}`;
+  return c.json({
+    day,
+    total: totalRows[0]!["n"],
+    items: rows.map((r) => ({
+      entityId: r["entity_id"],
+      kind: r["kind"],
+      title: r["title"],
+      abstract: r["abstract"],
+      authors: (r["authors"] as string[]).map((name) => ({
+        name,
+        entityId: entityId("person", personRef(name)),
+      })),
+      categories: r["categories"],
+      arxivId: r["arxiv_id"],
+      journal: r["journal"],
+      year: r["year"],
+      markedAt: r["marked_at"],
+    })),
+  });
+});
+
 // The papers browser: every paper in the system, sortable and filterable.
 const paperSortColumns = {
   published: "published_at",

@@ -100,6 +100,28 @@ export interface Feed {
   items: FeedItem[];
 }
 
+/** One paper from the daily resurfacing sample over the saved library. */
+export interface ResurfacedItem {
+  entityId: string;
+  kind: string;
+  title: string;
+  abstract: string | null;
+  authors: EntityRef[];
+  categories: string[];
+  arxivId: string | null;
+  journal: string | null;
+  year: number | null;
+  markedAt: string;
+}
+
+export interface Resurfaced {
+  /** The UTC day the sample is seeded with; it reshuffles when this rolls over. */
+  day: string;
+  /** Saved items in the library the sample was drawn from. */
+  total: number;
+  items: ResurfacedItem[];
+}
+
 export interface EntityLink {
   linkType: string;
   assertedBy: string;
@@ -294,6 +316,8 @@ function post(path: string, body: unknown): Promise<unknown> {
 export const api = {
   state: (): Promise<AppState> => request("/api/state"),
   feed: (days: number): Promise<Feed> => request(`/api/feed?days=${days}`),
+  resurfaced: (limit: number): Promise<Resurfaced> =>
+    request(`/api/today/resurfaced?limit=${limit}`),
   results: (name: string): Promise<Results> =>
     request(`/api/results/${encodeURIComponent(name)}`),
   entity: (id: string): Promise<EntityPage> =>

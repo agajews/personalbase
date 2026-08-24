@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
-import { api, type Feed, type FeedItem, type FilterSummary } from "../api.js";
-import { AuthorsLine, CategoryChips, EntityChip, formatDay, hashHue, MarkButtons } from "../ui.js";
+import {
+  api,
+  type Feed,
+  type FeedItem,
+  type FilterSummary,
+  type Resurfaced,
+  type ResurfacedItem,
+} from "../api.js";
+import {
+  ago,
+  AuthorsLine,
+  CategoryChips,
+  EntityChip,
+  formatDay,
+  hashHue,
+  MarkButtons,
+} from "../ui.js";
 
 function groupByPublicationDay(items: FeedItem[]): [string, FeedItem[]][] {
   const groups: [string, FeedItem[]][] = [];
@@ -95,6 +110,103 @@ function FeedRow({
   );
 }
 
+// ---- resurfacing ----
+// A shelf of older saved papers under the feed. The server draws a sample
+// seeded with today's date; we reveal it a few rows at a time.
+const SAMPLE_SIZE = 25;
+const REVEAL_STEP = 5;
+
+function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () => void }) {
+  return (
+    <details className="verdict">
+      <summary>
+        <span className="mark-dot" title="saved">✓</span>
+        <a className="verdict-title" href={`#/entity/${item.entityId}`} onClick={(e) => e.stopPropagation()}>
+          {item.title}
+        </a>
+        {item.categories.slice(0, 1).map((cat) => (
+          <a
+            key={cat}
+            className="cat-chip"
+            href={`#/papers/${encodeURIComponent(cat)}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {cat}
+          </a>
+        ))}
+        {item.journal !== null && <span className="link-provenance">{item.journal}</span>}
+        <span className="link-provenance">
+          saved {ago(item.markedAt)}
+          {item.year !== null && ` · ${item.year}`}
+        </span>
+        {item.arxivId !== null && (
+          <a
+            className="arxiv-id"
+            href={`https://arxiv.org/abs/${item.arxivId}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {item.arxivId}
+          </a>
+        )}
+      </summary>
+      <AuthorsLine authors={item.authors} />
+      {item.abstract !== null && <p className="verdict-abstract">{item.abstract}</p>}
+      <p className="verdict-actions">
+        <MarkButtons entityId={item.entityId} mark="saved" onChanged={onMarked} />
+        <CategoryChips categories={item.categories} />
+      </p>
+    </details>
+  );
+}
+
+function ResurfacedSection() {
+  const [sample, setSample] = useState<Resurfaced | null>(null);
+  const [shown, setShown] = useState(REVEAL_STEP);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .resurfaced(SAMPLE_SIZE)
+      .then((r) => {
+        if (!cancelled) setSample(r);
+      })
+      .catch(() => {
+        if (!cancelled) setSample(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  if (sample === null || sample.items.length === 0) {
+    return null;
+  }
+  const visible = sample.items.slice(0, shown);
+  return (
+    <div className="resurfaced">
+      <div className="feed-date">Resurfaced</div>
+      <div className="results-head">
+        <span className="results-count">
+          {visible.length} of {sample.items.length}
+        </span>
+        <span className="dot">·</span>
+        <span>drawn from {sample.total} saved, reshuffled daily</span>
+      </div>
+      {visible.map((item) => (
+        <ResurfacedRow key={item.entityId} item={item} onMarked={() => setTick((t) => t + 1)} />
+      ))}
+      {visible.length < sample.items.length && (
+        <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + REVEAL_STEP)}>
+          show {Math.min(REVEAL_STEP, sample.items.length - visible.length)} more
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function FeedView({ filters }: { filters: FilterSummary[] }) {
   const [feed, setFeed] = useState<Feed | null>(null);
   const [tick, setTick] = useState(0);
@@ -153,6 +265,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
             ))}
           </div>
         ))}
+      <ResurfacedSection />
     </section>
   );
 }

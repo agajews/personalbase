@@ -493,6 +493,17 @@ a.org-chip {
   max-width: 62ch;
 }
 
+/* Resurfaced rows carry no confidence bar, so their bodies start at the edge. */
+.resurfaced .verdict-authors,
+.resurfaced .verdict-abstract,
+.resurfaced .verdict-actions {
+  margin-left: 0;
+}
+
+.resurfaced-more {
+  margin: 2px 0 8px;
+}
+
 .rejects {
   margin-top: 14px;
 }
