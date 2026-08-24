@@ -121,7 +121,7 @@ export function makeLabPublicationsReactor(
   return {
     kind: "reactor",
     name: "lab-publications",
-    trigger: { kind: "cron", intervalHours: 24, payload: {} }, // all labs, daily
+    trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} }, // all labs, daily
     async run(ctx, input): Promise<ReactorEvent[]> {
       if (input.kind !== "job") {
         throw new Error("lab-publications reactor only supports job triggers");

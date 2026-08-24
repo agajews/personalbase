@@ -16,7 +16,7 @@ afterAll(async () => {
 const reactor: Reactor = {
   kind: "reactor",
   name: "ticker",
-  trigger: { kind: "cron", intervalHours: 24, payload: { tick: true } },
+  trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: { tick: true } },
   run: async () => [],
 };
 
@@ -48,5 +48,34 @@ describe("cron scheduling", () => {
     await sql`delete from jobs`;
     await sql`update runs set started_at = now(), status = 'failed'`;
     expect(await enqueueDueCronJobs(sql, [reactor])).toHaveLength(0);
+  });
+
+  test("a daily schedule is due once per tick of its fixed hour", async () => {
+    // A tick at the current UTC hour is always in the recent past, making
+    // the assertions below time-independent.
+    const daily: Reactor = {
+      kind: "reactor",
+      name: "dailyer",
+      trigger: {
+        kind: "cron",
+        schedule: { dailyAtHour: new Date().getUTCHours(), timeZone: "UTC" },
+        payload: {},
+      },
+      run: async () => [],
+    };
+
+    // Never ran → due.
+    expect(await enqueueDueCronJobs(sql, [daily])).toHaveLength(1);
+    const job = await claimJob(sql);
+    await sql`insert into runs (process, status, started_at) values ('reactor:dailyer', 'done', now())`;
+    await completeJob(sql, job!.jobId);
+
+    // Ran since the last tick → held.
+    expect(await enqueueDueCronJobs(sql, [daily])).toHaveLength(0);
+
+    // Last run before the tick (a day old) → due again.
+    await sql`update runs set started_at = now() - interval '24 hours'
+              where process = 'reactor:dailyer'`;
+    expect(await enqueueDueCronJobs(sql, [daily])).toHaveLength(1);
   });
 });

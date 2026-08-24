@@ -23,9 +23,17 @@ export interface Fold {
   apply(tx: TransactionSql, events: readonly StoredEvent[]): Promise<void>;
 }
 
+/**
+ * When a cron reactor is due: a rolling interval since its last run, or once
+ * per day at a fixed hour (0-23) in an IANA time zone.
+ */
+export type CronSchedule =
+  | { readonly intervalHours: number }
+  | { readonly dailyAtHour: number; readonly timeZone: string };
+
 export type ReactorTrigger =
   | { readonly kind: "event"; readonly consumes: readonly EventTypePattern[] }
-  | { readonly kind: "cron"; readonly intervalHours: number; readonly payload: unknown }
+  | { readonly kind: "cron"; readonly schedule: CronSchedule; readonly payload: unknown }
   | { readonly kind: "manual" };
 
 export type ReactorInput =

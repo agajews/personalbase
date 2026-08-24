@@ -42,7 +42,7 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
     // Daily judging over the same trailing window the ingest sweep covers;
     // already-judged (filter, prompt_hash, paper) triples are skipped, so the
     // scheduled run only pays for genuinely new papers or edited prompts.
-    trigger: { kind: "cron", intervalHours: 24, payload: {} },
+    trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} },
     async run(ctx, input): Promise<ReactorEvent[]> {
       if (input.kind !== "job") {
         throw new Error("paper-filter reactor only supports job triggers");

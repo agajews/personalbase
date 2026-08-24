@@ -18,7 +18,7 @@ const defaultCount = 12;
 export const resurfacerReactor: Reactor = {
   kind: "reactor",
   name: "resurfacer",
-  trigger: { kind: "cron", intervalHours: 24, payload: {} },
+  trigger: { kind: "cron", schedule: { intervalHours: 24 }, payload: {} },
   async run(ctx, input): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
       throw new Error("resurfacer only supports job triggers");
