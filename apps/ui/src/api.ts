@@ -298,9 +298,25 @@ export interface TablePage {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
-  const body = await response.json();
+  // A proxy that cannot reach the API answers with an empty or HTML body.
+  // Parsing before checking `ok` would report that as "Unexpected end of JSON
+  // input" and lose the status, so decode defensively and let the status talk.
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = undefined;
+  }
   if (!response.ok) {
-    throw new Error(body.error ?? `request failed: ${response.status}`);
+    const message =
+      typeof body === "object" && body !== null && "error" in body
+        ? String((body as { error: unknown }).error)
+        : `request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  if (body === undefined) {
+    throw new Error(`request failed: ${path} returned a non-JSON body`);
   }
   return body as T;
 }

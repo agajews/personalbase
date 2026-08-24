@@ -88,6 +88,14 @@ export function App() {
   }, []);
 
   const stateInFlight = useRef(false);
+  // A failed poll owns its banner and takes it down once the next poll lands.
+  // An error raised by a view is the user's own action failing, so it stands
+  // until that view replaces it rather than vanishing on the next tick.
+  const pollFailed = useRef(false);
+  const showError = useCallback((message: string | null) => {
+    pollFailed.current = false;
+    setError(message);
+  }, []);
   const refresh = useCallback(async () => {
     if (stateInFlight.current) {
       return;
@@ -96,7 +104,12 @@ export function App() {
     try {
       const s = await api.state();
       setState(s);
+      if (pollFailed.current) {
+        pollFailed.current = false;
+        setError(null);
+      }
     } catch (e) {
+      pollFailed.current = true;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       stateInFlight.current = false;
@@ -242,7 +255,7 @@ export function App() {
               state={state}
               refresh={refresh}
               onSaved={(name) => navTo(`/filter/${encodeURIComponent(name)}`)}
-              onError={setError}
+              onError={showError}
             />
           )}
           {route.kind === "entity" && <EntityView id={route.id} />}
