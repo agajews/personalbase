@@ -1381,16 +1381,21 @@ footer {
   padding: 0;
 }
 
-/* Ephemeral liveness line: only rendered while the session is running. */
+/* Ephemeral liveness line: only rendered while the session is running.
+   Everything is width-stable — the dots box fits all three dots and the
+   counter uses tabular digits — so the line never reflows or wraps. */
 .t-working {
   color: #9fc4a9;
   font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .working-dots::after {
   content: "";
   display: inline-block;
-  width: 1.2em;
+  width: 2em;
   text-align: left;
   animation: working-dots 1.4s steps(1, end) infinite;
 }
@@ -1405,6 +1410,7 @@ footer {
 .working-since {
   color: #7d938a;
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {
