@@ -119,6 +119,35 @@ ${reactorCatalog}
   count(*) deliberately.`;
 }
 
+// A chat whose uid is a study question's uid is that question's solution
+// discussion: the operator console steps aside for a math tutor with no
+// database tools — the conversation itself is the work.
+interface StudyQuestion {
+  day: string;
+  topic: string;
+  level: number;
+  question: string;
+  notes: string;
+}
+
+function tutorSystemPrompt(q: StudyQuestion): string {
+  return `You are the study tutor of "personalbase", discussing today's
+${q.topic} exercise (level ${q.level}, posed ${q.day}) with Alex, an ML
+researcher.
+
+The exercise:
+${q.question}
+
+(It practices: ${q.notes})
+
+Alex writes solutions or partial attempts; you check the work. Verify every
+step rigorously — confirm what is right, and locate errors precisely rather
+than vaguely. Prefer guiding questions and targeted hints over revealing the
+remaining solution, but give the full solution when asked. Be exact about
+notation and layout conventions. Use LaTeX ($...$ and $$...$$) for all math.
+Be concise: a tutor at a whiteboard, not a textbook.`;
+}
+
 const queryInput = z.object({ sql: z.string().min(1) });
 const appendInput = z.object({
   events: z
@@ -312,6 +341,10 @@ export async function streamChat(
   // Load prior turns BEFORE appending this message, so a fast worker fold
   // can't make the new message show up twice.
   const prior = await loadTranscript(sql, chatUid);
+  const questionRows = await sql`
+    select day, topic, level, question, notes from study_questions
+    where question_uid::text = ${chatUid}`;
+  const question = questionRows[0] as StudyQuestion | undefined;
   await appendEvents(sql, coreRegistry, [
     {
       type: "user.chat.message_sent",
@@ -330,8 +363,14 @@ export async function streamChat(
     const stream = client.messages.stream({
       model: "claude-opus-5",
       max_tokens: 16000,
-      system: [{ type: "text", text: cachedSystem, cache_control: { type: "ephemeral" } }],
-      tools,
+      system: [
+        {
+          type: "text",
+          text: question === undefined ? cachedSystem : tutorSystemPrompt(question),
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: question === undefined ? tools : [],
       messages,
     });
     stream.on("text", (delta) => {

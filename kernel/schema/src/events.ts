@@ -256,6 +256,24 @@ export const surfaceDayResurfacedV1 = z.object({
 });
 export type SurfaceDayResurfaced = z.infer<typeof surfaceDayResurfacedV1>;
 
+/**
+ * The day's study question (spaced repetition). questionUid doubles as the
+ * chatUid of its solution-discussion chat, so the tutoring conversation
+ * rides the existing chat rails.
+ */
+export const studyQuestionPosedV1 = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  questionUid: z.uuid(),
+  topic: z.string().min(1), // 'matrix-calculus' for now
+  /** Curriculum stage, 1 (basics) upward. */
+  level: z.number().int().min(1),
+  /** Markdown with $/$$ LaTeX. */
+  question: z.string().min(1),
+  /** One sentence on what this practices. */
+  notes: z.string(),
+});
+export type StudyQuestionPosed = z.infer<typeof studyQuestionPosedV1>;
+
 export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "arxiv.paper.ingested", versions: [{ schema: arxivPaperIngestedV1 }] },
   { type: "user.filter.defined", versions: [{ schema: userFilterDefinedV1 }] },
@@ -288,4 +306,5 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
   { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
   { type: "surface.day.resurfaced", versions: [{ schema: surfaceDayResurfacedV1 }] },
+  { type: "study.question.posed", versions: [{ schema: studyQuestionPosedV1 }] },
 ]);

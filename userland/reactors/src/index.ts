@@ -73,6 +73,14 @@ export {
 } from "./devagents/titler.js";
 export { resurfacerReactor, resurfacerJobPayload } from "./resurfacer.js";
 export {
+  questionWriterReactor,
+  makeQuestionWriterReactor,
+  questionWriterJobPayload,
+  type QuestionGenerator,
+  type QuestionHistoryItem,
+  type GeneratedQuestion,
+} from "./questionWriter.js";
+export {
   taxonomyReactor,
   makeTaxonomyReactor,
   taxonomyJobPayload,

@@ -102,6 +102,20 @@ export interface Feed {
   savedTotal: number;
   /** Per-day resurfacing history within the window, newest day first. */
   resurfaced: ResurfacedDay[];
+  /** Daily study questions within the window, newest day first. */
+  questions: StudyQuestion[];
+}
+
+/** One day's spaced-repetition exercise; questionUid is its chat's uid. */
+export interface StudyQuestion {
+  questionUid: string;
+  day: string;
+  topic: string;
+  level: number;
+  question: string;
+  notes: string;
+  /** Turns in the solution-discussion chat; 0 means not started. */
+  turns: number;
 }
 
 /** One item from a day's recorded resurfacing over the saved library. */
@@ -244,6 +258,15 @@ export interface ChatTurn {
   trace: ChatTraceItem[];
 }
 
+/** The study question a chat belongs to, when it is a solution discussion. */
+export interface ChatQuestion {
+  day: string;
+  topic: string;
+  level: number;
+  question: string;
+  notes: string;
+}
+
 export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "tool"; item: ChatTraceItem }
@@ -343,7 +366,7 @@ export const api = {
   classify: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
   chats: (): Promise<{ chats: ChatSummary[] }> => request("/api/chats"),
-  chatTurns: (chatUid: string): Promise<{ turns: ChatTurn[] }> =>
+  chatTurns: (chatUid: string): Promise<{ turns: ChatTurn[]; question: ChatQuestion | null }> =>
     request(`/api/chats/${encodeURIComponent(chatUid)}`),
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (

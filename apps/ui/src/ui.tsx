@@ -1,6 +1,23 @@
 // Shared presentational bits and navigation helpers.
 import { useState, type KeyboardEvent } from "react";
+import Markdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { api, type Mark } from "./api.js";
+
+/** Markdown with $/$$ LaTeX — study questions and chat replies carry math. */
+export function MathMarkdown({ children }: { children: string }) {
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+    >
+      {children}
+    </Markdown>
+  );
+}
 
 /**
  * A button that disables itself and shows a working state while its async

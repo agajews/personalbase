@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type FeedItem, type FilterSummary, type ResurfacedItem } from "../api.js";
+import {
+  api,
+  type FeedItem,
+  type FilterSummary,
+  type ResurfacedItem,
+  type StudyQuestion,
+} from "../api.js";
 import { useCached } from "../cache.js";
 import {
   ago,
@@ -9,6 +15,7 @@ import {
   formatDay,
   hashHue,
   MarkButtons,
+  MathMarkdown,
 } from "../ui.js";
 
 function FeedRow({
@@ -138,6 +145,23 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
   );
 }
 
+/** The day's spaced-repetition exercise; solving happens in its chat. */
+function QuestionCard({ q }: { q: StudyQuestion }) {
+  return (
+    <div className="question-card">
+      <div className="question-body">
+        <MathMarkdown>{q.question}</MathMarkdown>
+      </div>
+      <div className="question-actions">
+        <a className="primary question-solve" href={`#/chat/${q.questionUid}`}>
+          {q.turns > 0 ? "Continue discussion" : "Write your solution"}
+        </a>
+        <span className="question-notes">{q.notes}</span>
+      </div>
+    </div>
+  );
+}
+
 const revealStep = 5;
 
 /** A day's resurfacing block, revealed a few rows at a time. */
@@ -181,6 +205,7 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
   // (repetition cards, memos, reading blocks) join the same merge.
   interface DaySection {
     day: string;
+    questions: StudyQuestion[];
     fresh: FeedItem[];
     resurfaced: ResurfacedItem[];
   }
@@ -190,11 +215,14 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
     if (existing !== undefined) {
       return existing;
     }
-    const created: DaySection = { day, fresh: [], resurfaced: [] };
+    const created: DaySection = { day, questions: [], fresh: [], resurfaced: [] };
     sections.set(day, created);
     return created;
   };
   if (feed !== null) {
+    for (const q of feed.questions) {
+      section(q.day).questions.push(q);
+    }
     for (const group of feed.resurfaced) {
       section(group.day).resurfaced.push(...group.items);
     }
@@ -220,9 +248,17 @@ export function FeedView({ filters }: { filters: FilterSummary[] }) {
           Nothing on the timeline yet — the daily sweeps and resurfacer fill it in.
         </div>
       )}
-      {ordered.map(({ day, fresh, resurfaced }) => (
+      {ordered.map(({ day, questions, fresh, resurfaced }) => (
         <div key={day} className="timeline-day">
           <div className="feed-date timeline-date">{formatDay(day)}</div>
+          {questions.map((q) => (
+            <div key={q.questionUid}>
+              <div className="timeline-kind">
+                daily exercise · {q.topic} · level {q.level}
+              </div>
+              <QuestionCard q={q} />
+            </div>
+          ))}
           {resurfaced.length > 0 && (
             <ResurfacedBlock key={`r-${day}`} items={resurfaced} onMarked={refresh} />
           )}

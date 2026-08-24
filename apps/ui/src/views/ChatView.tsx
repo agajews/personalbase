@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
 import {
   api,
   streamChatTurn,
+  type ChatQuestion,
   type ChatSummary,
   type ChatTraceItem,
   type ChatTurn,
 } from "../api.js";
-import { ago, navTo } from "../ui.js";
+import { ago, formatDay, MathMarkdown, navTo } from "../ui.js";
 
 // The operator chat. Conversations live in the database (chat events folded
 // into chats/chat_turns); this view streams new turns over SSE and renders
@@ -110,6 +108,7 @@ function ChatHistory({
 export function ChatView({ uid }: { uid: string | null }) {
   const [chatUid, setChatUid] = useState<string | null>(uid);
   const [turns, setTurns] = useState<LiveTurn[]>([]);
+  const [question, setQuestion] = useState<ChatQuestion | null>(null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -135,9 +134,13 @@ export function ChatView({ uid }: { uid: string | null }) {
     }
     setChatUid(uid);
     setTurns([]);
+    setQuestion(null);
     setError(null);
     if (uid !== null) {
-      void api.chatTurns(uid).then((r) => setTurns(r.turns));
+      void api.chatTurns(uid).then((r) => {
+        setTurns(r.turns);
+        setQuestion(r.question);
+      });
     }
   }, [uid]);
 
@@ -184,9 +187,23 @@ export function ChatView({ uid }: { uid: string | null }) {
     }
   };
 
-  // Fresh chat, nothing said yet: the large centered composer.
+  // A study question's chat pins the exercise above the thread; the tutor on
+  // the other end sees the same question.
+  const questionCard =
+    question === null ? null : (
+      <div className="chat-question">
+        <div className="chat-question-head">
+          {question.topic} · level {question.level} · {formatDay(question.day)}
+        </div>
+        <MathMarkdown>{question.question}</MathMarkdown>
+        <div className="chat-question-notes">{question.notes}</div>
+      </div>
+    );
+
+  // Fresh chat, nothing said yet: the large centered composer — unless this
+  // is a question chat, which opens straight onto the exercise.
   const main =
-    turns.length === 0 && !busy ? (
+    turns.length === 0 && !busy && question === null ? (
       <div className="chat-home">
         <h1 className="chat-home-title">What are we looking for?</h1>
         <p className="chat-home-sub">
@@ -200,6 +217,7 @@ export function ChatView({ uid }: { uid: string | null }) {
     ) : (
       <div className="chat-view">
         <div className="chat-turns">
+          {questionCard}
           {turns.map((turn, i) => (
             <div key={i} className={`chat-turn ${turn.role}`}>
               <Trace trace={turn.trace} />
@@ -208,7 +226,7 @@ export function ChatView({ uid }: { uid: string | null }) {
                   turn.text === "" && turn.streaming === true ? (
                     <span className="working">thinking…</span>
                   ) : (
-                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{turn.text}</Markdown>
+                    <MathMarkdown>{turn.text}</MathMarkdown>
                   )
                 ) : (
                   turn.text

@@ -28,6 +28,7 @@ import {
   papersFold,
   paperRef,
   personRef,
+  questionsFold,
   resurfacedFold,
   taxonomyFold,
 } from "@nc/folds";
@@ -47,6 +48,7 @@ const folds = [
   devFold,
   chatsFold,
   resurfacedFold,
+  questionsFold,
 ];
 
 if (existsSync(".env")) {
@@ -306,15 +308,20 @@ app.get("/api/feed", async (c) => {
   for (const l of labLinks) {
     entry(idToArxiv.get(l["from_id"])!).labs.set(l["entity_id"], l["display_name"]);
   }
-  if (surfaced.size === 0) {
-    return c.json({ days, items: [] });
-  }
-  const papers = await sql`
-    select arxiv_id, title, abstract, authors, categories, published_at, updated_at
-    from papers where arxiv_id = any(${[...surfaced.keys()]})`;
-  const feedMarkRows = await sql`
-    select entity_id, mark from paper_marks
-    where entity_id = any(${papers.map((p) => entityId("paper", paperRef(p["arxiv_id"])))})`;
+  // No early return on an empty paper window: resurfacing history and the
+  // day's study question must still reach the timeline on quiet days.
+  const papers =
+    surfaced.size === 0
+      ? []
+      : await sql`
+          select arxiv_id, title, abstract, authors, categories, published_at, updated_at
+          from papers where arxiv_id = any(${[...surfaced.keys()]})`;
+  const feedMarkRows =
+    papers.length === 0
+      ? []
+      : await sql`
+          select entity_id, mark from paper_marks
+          where entity_id = any(${papers.map((p) => entityId("paper", paperRef(p["arxiv_id"])))})`;
   const feedMarkById = new Map(feedMarkRows.map((m) => [m["entity_id"], m["mark"]]));
   const items = papers
     .map((p) => {
@@ -394,7 +401,27 @@ app.get("/api/feed", async (c) => {
       mark: r["mark"],
     });
   }
-  return c.json({ days, items, savedTotal, resurfaced });
+  // Daily study questions for the window; turns > 0 means the solution
+  // discussion has started (the question's uid is its chat's uid).
+  const questionRows = await sql`
+    select q.question_uid, q.day, q.topic, q.level, q.question, q.notes,
+           coalesce(t.n, 0)::int as turns
+    from study_questions q
+    left join lateral (
+      select count(*)::int as n from chat_turns where chat_uid = q.question_uid
+    ) t on true
+    where q.day >= ${from.slice(0, 10)}::date
+    order by q.day desc`;
+  const questions = questionRows.map((q) => ({
+    questionUid: q["question_uid"],
+    day: new Date(q["day"]).toISOString().slice(0, 10),
+    topic: q["topic"],
+    level: q["level"],
+    question: q["question"],
+    notes: q["notes"],
+    turns: q["turns"],
+  }));
+  return c.json({ days, items, savedTotal, resurfaced, questions });
 });
 
 // (The former /api/today/resurfaced endpoint is superseded: resurfacing is
@@ -1089,12 +1116,28 @@ app.get("/api/chats/:uid", async (c) => {
   const turns = await sql`
     select role, text, trace from chat_turns
     where chat_uid = ${uid} order by event_seq`;
+  // If this chat belongs to a study question, ship the question so the UI can
+  // pin it above the thread (::text comparison tolerates non-uuid uids).
+  const questionRows = await sql`
+    select day, topic, level, question, notes from study_questions
+    where question_uid::text = ${uid}`;
+  const q = questionRows[0];
   return c.json({
     turns: turns.map((t) => ({
       role: t["role"],
       text: t["text"],
       trace: t["trace"] ?? [],
     })),
+    question:
+      q === undefined
+        ? null
+        : {
+            day: new Date(q["day"]).toISOString().slice(0, 10),
+            topic: q["topic"],
+            level: q["level"],
+            question: q["question"],
+            notes: q["notes"],
+          },
   });
 });
 

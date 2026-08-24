@@ -44,6 +44,8 @@ export {
   agentChatRepliedV1,
   surfaceDayResurfacedV1,
   type SurfaceDayResurfaced,
+  studyQuestionPosedV1,
+  type StudyQuestionPosed,
   type AgentTaxonomyProposed,
   type UserChatMessageSent,
   type AgentChatReplied,
