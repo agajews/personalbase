@@ -68,15 +68,23 @@ class SpriteSandbox implements Sandbox {
 
   private async handle(): Promise<Sprite> {
     if (this.sprite === undefined) {
-      this.sprite = this.createOnFirstUse
-        ? await spritesClient().createSprite(this.name, {
+      if (this.createOnFirstUse) {
+        // Get-or-create: createSprite errors on an existing name, and
+        // conversation turns deliberately reuse the task's sandbox.
+        try {
+          this.sprite = await spritesClient().getSprite(this.name);
+        } catch {
+          this.sprite = await spritesClient().createSprite(this.name, {
             config: {
               ramMB: 2048,
               cpus: 2,
               region: process.env["SPRITES_REGION"] ?? "sjc",
             },
-          })
-        : spritesClient().sprite(this.name);
+          });
+        }
+      } else {
+        this.sprite = spritesClient().sprite(this.name);
+      }
     }
     return this.sprite;
   }
