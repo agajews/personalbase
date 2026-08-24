@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DevRun, type DevTaskPage } from "../api.js";
-import { cmdEnter, runDuration } from "../ui.js";
+import { cmdEnter, MathMarkdown, runDuration } from "../ui.js";
 import { DevStatusChip } from "./AgentsView.js";
 
 interface TranscriptLine {
@@ -9,10 +9,16 @@ interface TranscriptLine {
 }
 
 /** Claude Code stream-json lines become readable rows; anything else is a plain log line. */
-function renderLine(raw: string): TranscriptLine | null {
+function renderLines(raw: string): TranscriptLine[] {
   const line = raw.trim();
-  if (line === "") return null;
-  if (!line.startsWith("{")) return { kind: "plain", text: line };
+  if (line === "") return [];
+  if (!line.startsWith("{")) {
+    // A stream-json line larger than one poll chunk arrives split: the tail
+    // fragments are binary-ish JSON innards (file Read outputs, base64…),
+    // not log lines. Real log lines are short.
+    if (line.length > 400) return [];
+    return [{ kind: "plain", text: line }];
+  }
   try {
     const parsed = JSON.parse(line) as {
       type?: string;
@@ -22,10 +28,10 @@ function renderLine(raw: string): TranscriptLine | null {
       total_cost_usd?: number;
     };
     if (parsed.type === "system") {
-      return { kind: "meta", text: `session ${parsed.subtype ?? "event"}` };
+      return [{ kind: "meta", text: `session ${parsed.subtype ?? "event"}` }];
     }
     if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
-      const parts: string[] = [];
+      const parts: TranscriptLine[] = [];
       for (const block of parsed.message.content as {
         type?: string;
         text?: string;
@@ -33,27 +39,27 @@ function renderLine(raw: string): TranscriptLine | null {
         input?: unknown;
       }[]) {
         if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
-          parts.push(block.text.trim());
+          parts.push({ kind: "text", text: block.text.trim() });
         }
         if (block.type === "tool_use") {
           const input = JSON.stringify(block.input ?? {});
-          parts.push(`⚒ ${block.name}(${input.length > 160 ? input.slice(0, 160) + "…" : input})`);
+          parts.push({
+            kind: "tool",
+            text: `⚒ ${block.name}(${input.length > 160 ? input.slice(0, 160) + "…" : input})`,
+          });
         }
       }
-      if (parts.length === 0) return null;
-      return {
-        kind: parts[0]!.startsWith("⚒") ? "tool" : "text",
-        text: parts.join("\n"),
-      };
+      return parts;
     }
     if (parsed.type === "result") {
       const cost =
         parsed.total_cost_usd !== undefined ? ` · $${parsed.total_cost_usd.toFixed(2)}` : "";
-      return { kind: "meta", text: `agent finished${cost}` };
+      return [{ kind: "meta", text: `agent finished${cost}` }];
     }
-    return null; // tool results and other frames stay collapsed
+    return []; // tool results and other frames stay collapsed
   } catch {
-    return { kind: "plain", text: line };
+    // Looked like JSON but didn't parse: a truncated frame, not prose.
+    return [];
   }
 }
 
@@ -79,9 +85,7 @@ function Transcript({ run }: { run: DevRun }) {
         const text = buffer.current + d.chunks.map((c) => c.content).join("");
         const parts = text.split("\n");
         buffer.current = parts.pop() ?? "";
-        const fresh = parts
-          .map(renderLine)
-          .filter((l): l is TranscriptLine => l !== null);
+        const fresh = parts.flatMap(renderLines);
         if (fresh.length > 0) {
           setLines((prev) => [...prev, ...fresh]);
         }
@@ -106,11 +110,17 @@ function Transcript({ run }: { run: DevRun }) {
   return (
     <div className="transcript" ref={box}>
       {lines.length === 0 && <div className="empty">waiting for output…</div>}
-      {lines.map((l, i) => (
-        <div key={i} className={`t-line t-${l.kind}`}>
-          {l.text}
-        </div>
-      ))}
+      {lines.map((l, i) =>
+        l.kind === "text" ? (
+          <div key={i} className="t-line t-text t-markdown">
+            <MathMarkdown>{l.text}</MathMarkdown>
+          </div>
+        ) : (
+          <div key={i} className={`t-line t-${l.kind}`}>
+            {l.text}
+          </div>
+        ),
+      )}
     </div>
   );
 }

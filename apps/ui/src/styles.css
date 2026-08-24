@@ -1314,6 +1314,55 @@ footer {
   color: #eef2ea;
 }
 
+/* Agent prose renders as markdown inside the dark console. */
+.t-markdown {
+  font-family: var(--sans);
+  font-size: 13px;
+  white-space: normal;
+}
+
+.t-markdown p {
+  margin: 0 0 6px;
+}
+
+.t-markdown ul,
+.t-markdown ol {
+  margin: 0 0 6px;
+  padding-left: 20px;
+}
+
+.t-markdown code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.t-markdown pre {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+
+.t-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.t-markdown a {
+  color: #9fc4a9;
+}
+
+.t-markdown h1,
+.t-markdown h2,
+.t-markdown h3 {
+  font-size: 13.5px;
+  margin: 8px 0 4px;
+  color: #eef2ea;
+}
+
 .t-tool {
   color: #9fc4a9;
 }
