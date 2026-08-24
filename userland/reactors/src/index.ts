@@ -71,6 +71,7 @@ export {
   type Titler,
   type TitleResult,
 } from "./devagents/titler.js";
+export { resurfacerReactor, resurfacerJobPayload } from "./resurfacer.js";
 export {
   taxonomyReactor,
   makeTaxonomyReactor,

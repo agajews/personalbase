@@ -28,6 +28,7 @@ import {
   papersFold,
   paperRef,
   personRef,
+  resurfacedFold,
   taxonomyFold,
 } from "@nc/folds";
 
@@ -45,6 +46,7 @@ const folds = [
   taxonomyFold,
   devFold,
   chatsFold,
+  resurfacedFold,
 ];
 
 if (existsSync(".env")) {
@@ -345,42 +347,37 @@ app.get("/api/feed", async (c) => {
         (i.labs.length > 0 ? 1 : 0) + (i.matches[0]?.confidence ?? 0);
       return score(b) - score(a);
     });
-  return c.json({ days, items });
-});
 
-// The Today view's second shelf: a slice of the saved library, reshuffled
-// once a day. md5(entity_id || day) is a deterministic shuffle — the same
-// order for every request on that UTC day, a different one tomorrow — so a
-// reload shows the same papers and asking for more rows extends the sample
-// instead of re-drawing it.
-app.get("/api/today/resurfaced", async (c) => {
-  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? 25)));
-  const day = new Date().toISOString().slice(0, 10);
-  const totalRows = await sql`select count(*)::int as n from paper_marks where mark = 'saved'`;
-  // Marks live on entities, so the library's Paperpile-backed items count too
-  // (lateral: one entity can carry several Paperpile rows).
-  const rows = await sql`
-    select m.entity_id, m.marked_at, e.kind,
+  // Resurfacing history for the window: facts recorded by the daily
+  // resurfacer reactor, so past days show what actually resurfaced then.
+  const savedTotal = (
+    await sql`select count(*)::int as n from paper_marks where mark = 'saved'`
+  )[0]!["n"];
+  const resurfacedRows = await sql`
+    select ri.day, ri.position, ri.entity_id, e.kind,
            coalesce(p.title, li.title, e.display_name) as title,
            coalesce(p.abstract, li.abstract) as abstract,
            coalesce(p.authors, li.authors, '[]'::jsonb) as authors,
            coalesce(p.categories, '[]'::jsonb) as categories,
            coalesce(p.arxiv_id, li.arxiv_id) as arxiv_id,
-           li.year, li.journal
-    from paper_marks m
-    join entities e on e.entity_id = m.entity_id
-    left join papers p on p.entity_id = m.entity_id
+           li.year, li.journal, m.marked_at, m.mark
+    from resurfaced_items ri
+    join entities e on e.entity_id = ri.entity_id
+    left join papers p on p.entity_id = ri.entity_id
     left join lateral (
       select title, abstract, authors, year, journal, arxiv_id
-      from library_items where entity_id = m.entity_id order by added_at limit 1
+      from library_items where entity_id = ri.entity_id order by added_at limit 1
     ) li on true
-    where m.mark = 'saved'
-    order by md5(m.entity_id::text || ${day})
-    limit ${limit}`;
-  return c.json({
-    day,
-    total: totalRows[0]!["n"],
-    items: rows.map((r) => ({
+    left join paper_marks m on m.entity_id = ri.entity_id
+    where ri.day >= ${from.slice(0, 10)}::date
+    order by ri.day desc, ri.position`;
+  const resurfaced: { day: string; items: unknown[] }[] = [];
+  for (const r of resurfacedRows) {
+    const day = new Date(r["day"]).toISOString().slice(0, 10);
+    if (resurfaced.length === 0 || resurfaced[resurfaced.length - 1]!.day !== day) {
+      resurfaced.push({ day, items: [] });
+    }
+    resurfaced[resurfaced.length - 1]!.items.push({
       entityId: r["entity_id"],
       kind: r["kind"],
       title: r["title"],
@@ -394,9 +391,15 @@ app.get("/api/today/resurfaced", async (c) => {
       journal: r["journal"],
       year: r["year"],
       markedAt: r["marked_at"],
-    })),
-  });
+      mark: r["mark"],
+    });
+  }
+  return c.json({ days, items, savedTotal, resurfaced });
 });
+
+// (The former /api/today/resurfaced endpoint is superseded: resurfacing is
+// now a daily fact emitted by the resurfacer reactor and served per-day
+// inside /api/feed.)
 
 // The papers browser: every paper in the system, sortable and filterable.
 const paperSortColumns = {

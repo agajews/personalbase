@@ -40,6 +40,8 @@ export {
   agentTaxonomyProposedV1,
   userChatMessageSentV1,
   agentChatRepliedV1,
+  surfaceDayResurfacedV1,
+  type SurfaceDayResurfaced,
   type AgentTaxonomyProposed,
   type UserChatMessageSent,
   type AgentChatReplied,

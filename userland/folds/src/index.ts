@@ -5,6 +5,7 @@ export { marksFold } from "./marks.js";
 export { devFold } from "./dev.js";
 export { taxonomyFold } from "./taxonomy.js";
 export { chatsFold } from "./chats.js";
+export { resurfacedFold } from "./resurfaced.js";
 export { papersFold } from "./papers.js";
 export { filtersFold, promptHash } from "./filters.js";
 export { filterResultsFold } from "./filterResults.js";
