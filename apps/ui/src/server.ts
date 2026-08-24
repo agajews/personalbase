@@ -93,6 +93,36 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
+// ---- GitHub push webhook ----
+// GitHub POSTs here on every push; a push to trunk enqueues the sha-gated
+// main-ui resync, so the sprite deployment updates within seconds of a land
+// (the reactor's 15-min cron remains the backstop for missed deliveries).
+// HMAC over the raw body authenticates GitHub — webhooks can't send auth
+// headers, so this route is registered before the password gate. 404 when
+// GITHUB_WEBHOOK_SECRET is unset (previews, the sprite itself, local dev).
+const webhookSecret = process.env["GITHUB_WEBHOOK_SECRET"] ?? "";
+const devTrunk = process.env["DEV_TRUNK"] ?? "main";
+app.post("/webhooks/github", async (c) => {
+  if (webhookSecret === "") {
+    return c.json({ error: "webhook not configured" }, 404);
+  }
+  const body = await c.req.text();
+  const expected =
+    "sha256=" + createHmac("sha256", webhookSecret).update(body).digest("hex");
+  if (!safeEqual(c.req.header("x-hub-signature-256") ?? "", expected)) {
+    return c.json({ error: "bad signature" }, 401);
+  }
+  if (c.req.header("x-github-event") !== "push") {
+    return c.json({ ok: true, ignored: "not a push" });
+  }
+  const push = JSON.parse(body) as { ref?: string };
+  if (push.ref !== `refs/heads/${devTrunk}`) {
+    return c.json({ ok: true, ignored: `not ${devTrunk}` });
+  }
+  const jobId = await enqueueJob(sql, "reactor:main-ui", {});
+  return c.json({ ok: true, jobId });
+});
+
 const loginPage = (message: string) => `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>personalbase</title>
