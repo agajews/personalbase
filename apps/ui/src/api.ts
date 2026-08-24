@@ -202,6 +202,19 @@ export interface TopicItems {
   }[];
 }
 
+export interface ChatTraceItem {
+  tool: string;
+  summary: string;
+  isError: boolean;
+}
+
+export interface ChatResult {
+  /** Opaque API-fidelity transcript; store and send back verbatim. */
+  transcript: unknown[];
+  reply: string;
+  trace: ChatTraceItem[];
+}
+
 export interface TableList {
   tables: { name: string; rows: number }[];
 }
@@ -260,6 +273,8 @@ export const api = {
     request(`/api/topics/${encodeURIComponent(slug)}`),
   classify: (regenerate: boolean): Promise<{ jobId: string }> =>
     post("/api/jobs/classify", { regenerate }) as Promise<{ jobId: string }>,
+  chat: (transcript: unknown[], message: string): Promise<ChatResult> =>
+    post("/api/chat", { transcript, message }) as Promise<ChatResult>,
   tables: (): Promise<TableList> => request("/api/tables"),
   table: (
     name: string,

@@ -11,6 +11,7 @@ import { PapersView } from "./views/PapersView.js";
 import { AgentsView } from "./views/AgentsView.js";
 import { TaskView } from "./views/TaskView.js";
 import { TopicsView } from "./views/TopicsView.js";
+import { ChatView } from "./views/ChatView.js";
 
 type Route =
   | { kind: "feed" }
@@ -23,6 +24,7 @@ type Route =
   | { kind: "agents" }
   | { kind: "task"; uid: string }
   | { kind: "topics"; slug: string | null }
+  | { kind: "chat" }
   | { kind: "tables"; table: string | null };
 
 function parseRoute(hash: string): Route {
@@ -52,6 +54,8 @@ function parseRoute(hash: string): Route {
       return parts[1] !== undefined && parts[1] !== ""
         ? { kind: "task", uid: parts[1] }
         : { kind: "agents" };
+    case "chat":
+      return { kind: "chat" };
     case "topics":
       return {
         kind: "topics",
@@ -160,6 +164,12 @@ export function App() {
             onClick={() => navTo("/")}
           >
             <span className="filter-name">Today</span>
+          </button>
+          <button
+            className={`filter-item ${route.kind === "chat" ? "active" : ""}`}
+            onClick={() => navTo("/chat")}
+          >
+            <span className="filter-name">Chat</span>
           </button>
           <button
             className={`filter-item ${route.kind === "marked" && route.mark === "want_to_read" ? "active" : ""}`}
@@ -289,6 +299,7 @@ export function App() {
           {route.kind === "agents" && <AgentsView />}
           {route.kind === "task" && <TaskView uid={route.uid} />}
           {route.kind === "topics" && <TopicsView slug={route.slug} state={state} />}
+          {route.kind === "chat" && <ChatView />}
           {route.kind === "tables" && <TablesView table={route.table} />}
           {error !== null && <div className="error">{error}</div>}
         </main>

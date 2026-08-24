@@ -23,6 +23,9 @@ importers:
 
   apps/ui:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.110.0
+        version: 0.110.0(zod@4.4.3)
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.17(hono@4.13.3)

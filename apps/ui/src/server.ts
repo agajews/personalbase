@@ -14,6 +14,8 @@ import {
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
 import { catchUpFolds, enqueueJob } from "@nc/process";
+import { runChat } from "./chat.js";
+import type Anthropic from "@anthropic-ai/sdk";
 import {
   entityId,
   filterResultsFold,
@@ -921,6 +923,24 @@ app.post("/api/jobs/labs", async (c) => {
     body.lab === undefined ? {} : { lab: body.lab },
   );
   return c.json({ jobId });
+});
+
+// The operator chat: Opus with read-only SQL plus event/job agency. The
+// transcript is opaque to the client (full content blocks round-trip so tool
+// context and thinking survive across turns).
+const chatBody = z.object({
+  transcript: z.array(z.unknown()).default([]),
+  message: z.string().min(1),
+});
+
+app.post("/api/chat", async (c) => {
+  const body = chatBody.parse(await c.req.json());
+  const transcript: Anthropic.MessageParam[] = [
+    ...(body.transcript as Anthropic.MessageParam[]),
+    { role: "user", content: body.message },
+  ];
+  const result = await runChat(sql, transcript);
+  return c.json(result);
 });
 
 app.onError((error, c) => {
