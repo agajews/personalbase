@@ -36,6 +36,8 @@ export const devPollPayload = z.object({
   prSeen: z.array(z.number().int()).default([]),
   /** PR numbers whose agent merge request was already forwarded. */
   mergeSeen: z.array(z.number().int()).default([]),
+  /** Consecutive poll failures; resets on any successful poll. */
+  pollErrors: z.number().int().nonnegative().default(0),
 });
 export type DevPollPayload = z.infer<typeof devPollPayload>;
 
@@ -148,6 +150,7 @@ export async function launchRun(
     previewSeen: false,
     prSeen: [],
     mergeSeen: [],
+    pollErrors: 0,
   };
   return {
     events: [
@@ -200,8 +203,26 @@ export async function pollRun(
   try {
     poll = await sandbox.poll(runDirFor(payload.runUid), payload.cursor, pollMaxBytes);
   } catch (error) {
-    // A vanished sandbox fails the run rather than retrying forever.
     const message = error instanceof Error ? error.message : String(error);
+    // Transient network blips shouldn't kill a live session: retry a few
+    // polls before declaring the sandbox gone.
+    if (payload.pollErrors < 3) {
+      return {
+        events: [],
+        followUps: [
+          {
+            process: `reactor:${reactorName}`,
+            payload: {
+              ...payload,
+              polls: payload.polls + 1,
+              pollErrors: payload.pollErrors + 1,
+            },
+            runAfterSeconds: pollIntervalSeconds,
+            dedupeKey: `dev:${payload.runUid}:poll:${payload.polls + 2}`,
+          },
+        ],
+      };
+    }
     return { events: [finishedEvent(payload, "failed", null, `sandbox poll failed: ${message}`)] };
   }
 
@@ -351,6 +372,7 @@ export async function pollRun(
           previewSeen,
           prSeen,
           mergeSeen,
+          pollErrors: 0,
         },
         // Tighten the cadence while output is flowing so the conversation
         // feels live; back off when the session is quiet.

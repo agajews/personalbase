@@ -23,7 +23,7 @@ import type { StoredEvent, TransactionSql } from "@nc/log";
 export const devFold: Fold = {
   kind: "fold",
   name: "dev",
-  version: 6, // agent-requested merges
+  version: 7, // failed runs no longer downgrade merged tasks
   consumes: [
     "user.devtask.created",
     "user.devtask.archived",
@@ -214,9 +214,12 @@ async function applyOne(tx: TransactionSql, event: StoredEvent): Promise<void> {
           error = ${finished.error}, finished_at = ${at}
       where run_uid = ${finished.runUid}`;
     if (finished.status === "failed") {
+      // A trailing run failure must not downgrade a task whose PR already
+      // merged: the merge lane destroys the task's sandboxes, so the feature
+      // run's poll chain dies with a network error *after* dev.pr.merged.
       await tx`
         update dev_tasks set status = 'failed', updated_seq = ${seq}
-        where task_uid = ${finished.taskUid}`;
+        where task_uid = ${finished.taskUid} and status not in ('merged', 'archived')`;
     }
     return;
   }
