@@ -94,7 +94,9 @@ export function EntityView({ id }: { id: string }) {
   return (
     <div className="entity-page">
       <div className="entity-head">
-        <span className="entity-kind">{entity.kind}</span>
+        {/* A paper announces itself — the kind label only earns its place on
+            entities whose type isn't obvious from the page below. */}
+        {entity.kind !== "paper" && <span className="entity-kind">{entity.kind}</span>}
         <h1>{entity.displayName ?? entity.entityId}</h1>
         {(entity.kind === "paper" || entity.kind === "resource") && (
           <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
