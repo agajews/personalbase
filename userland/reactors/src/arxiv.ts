@@ -4,6 +4,8 @@ import type { Reactor, ReactorEvent, ReactorInput } from "@nc/process";
 import { parseArxivAtom, type ArxivEntry } from "./arxivAtom.js";
 
 export const arxivJobPayload = z.object({
+  /** Explicit arXiv ids to ingest; when present, the date range is ignored. */
+  ids: z.array(z.string().min(1)).optional(),
   /** Defaults to a trailing window ending now (arXiv indexing lags 1-2 days). */
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
@@ -123,6 +125,15 @@ export const arxivReactor: Reactor = {
       throw new Error("arxiv reactor only supports job triggers");
     }
     const payload = arxivJobPayload.parse(input.payload);
+    if (payload.ids !== undefined && payload.ids.length > 0) {
+      const entries = await fetchArxivByIds(payload.ids);
+      const found = new Set(entries.map((e) => e.arxivId));
+      const unresolved = payload.ids.filter((id) => !found.has(id.replace(/v\d+$/, "")));
+      if (unresolved.length > 0) {
+        console.log(`arxiv: ${unresolved.length} ids not returned: ${unresolved.join(", ")}`);
+      }
+      return entries.map(entryToEvent);
+    }
     const query = searchQuery(payload);
     const events: ReactorEvent[] = [];
     let start = 0;

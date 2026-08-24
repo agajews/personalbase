@@ -641,6 +641,81 @@ button.mark.on {
   margin-top: 10px;
 }
 
+/* ---- chat ---- */
+
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  height: calc(100vh - 220px);
+}
+
+.chat-turns {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.chat-turn.user {
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.chat-turn.assistant {
+  align-self: flex-start;
+  max-width: 95%;
+}
+
+.chat-turn.user .chat-bubble {
+  background: var(--spruce);
+  color: #eef4ee;
+  border-radius: 12px 12px 3px 12px;
+  padding: 9px 13px;
+}
+
+.chat-turn.assistant .chat-bubble {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 12px 3px;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+}
+
+.chat-trace {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin: 0 0 5px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-trace-line.err {
+  color: #a04a3c;
+}
+
+.chat-working {
+  align-self: flex-start;
+  font-size: 13px;
+}
+
+.chat-input {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.chat-input textarea {
+  flex: 1;
+  font-family: var(--sans);
+  resize: none;
+}
+
 /* ---- entity pages, search, tables ---- */
 
 .entity-page {
