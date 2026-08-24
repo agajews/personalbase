@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  api,
-  type FeedItem,
-  type FilterSummary,
-  type Resurfaced,
-  type ResurfacedItem,
-} from "../api.js";
+import { api, type FeedItem, type FilterSummary, type ResurfacedItem } from "../api.js";
 import { useCached } from "../cache.js";
 import {
   ago,
@@ -162,24 +156,8 @@ function ResurfacedRow({ item, onMarked }: { item: ResurfacedItem; onMarked: () 
 }
 
 function ResurfacedSection() {
-  const [sample, setSample] = useState<Resurfaced | null>(null);
+  const { data: sample, refresh } = useCached("resurfaced", () => api.resurfaced(SAMPLE_SIZE));
   const [shown, setShown] = useState(REVEAL_STEP);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .resurfaced(SAMPLE_SIZE)
-      .then((r) => {
-        if (!cancelled) setSample(r);
-      })
-      .catch(() => {
-        if (!cancelled) setSample(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
 
   if (sample === null || sample.items.length === 0) {
     return null;
@@ -196,7 +174,7 @@ function ResurfacedSection() {
         <span>drawn from {sample.total} saved, reshuffled daily</span>
       </div>
       {visible.map((item) => (
-        <ResurfacedRow key={item.entityId} item={item} onMarked={() => setTick((t) => t + 1)} />
+        <ResurfacedRow key={item.entityId} item={item} onMarked={refresh} />
       ))}
       {visible.length < sample.items.length && (
         <button className="ghost resurfaced-more" onClick={() => setShown((n) => n + REVEAL_STEP)}>
