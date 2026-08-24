@@ -14,7 +14,6 @@ export interface DevConfig {
   readonly githubToken: string;
   readonly anthropicApiKey: string;
   readonly flyDeployTokenWorker: string;
-  readonly flyDeployTokenUi: string;
   /** Read-only connection string for live UI previews ("" disables them). */
   readonly previewDatabaseUrl: string;
 }
@@ -34,7 +33,6 @@ export function devConfigFromEnv(): DevConfig {
     anthropicApiKey: require("ANTHROPIC_API_KEY"),
     // Only the merge lane passes these into a sandbox.
     flyDeployTokenWorker: process.env["FLY_DEPLOY_TOKEN_WORKER"] ?? "",
-    flyDeployTokenUi: process.env["FLY_DEPLOY_TOKEN_UI"] ?? "",
     previewDatabaseUrl: process.env["PREVIEW_DATABASE_URL"] ?? "",
   };
 }
@@ -354,26 +352,17 @@ command -v flyctl > /dev/null 2>&1 \
 # Docker build; the layer-cached Dockerfiles make unchanged-deps builds fast).
 DEPLOYED=""
 WORKER_PID=""
-UI_PID=""
+# Only the worker deploys to Fly; the UI lives on the nc-main-ui sprite and
+# redeploys itself when the daemon's trunk watcher sees main move.
 if [ -n "\${FLY_DEPLOY_TOKEN_WORKER:-}" ]; then
   echo "[nc] deploying personalbase-worker"
   FLY_API_TOKEN="$FLY_DEPLOY_TOKEN_WORKER" flyctl deploy -c fly.toml --remote-only \
     > "$NC_RUN_DIR/deploy-worker.log" 2>&1 &
   WORKER_PID=$!
 fi
-if [ -n "\${FLY_DEPLOY_TOKEN_UI:-}" ]; then
-  echo "[nc] deploying personalbase-ui"
-  FLY_API_TOKEN="$FLY_DEPLOY_TOKEN_UI" flyctl deploy -c fly.ui.toml --remote-only \
-    > "$NC_RUN_DIR/deploy-ui.log" 2>&1 &
-  UI_PID=$!
-fi
 if [ -n "$WORKER_PID" ]; then
   if wait "$WORKER_PID"; then DEPLOYED="$DEPLOYED personalbase-worker"; \
   else echo "[nc] worker deploy FAILED"; tail -5 "$NC_RUN_DIR/deploy-worker.log"; fi
-fi
-if [ -n "$UI_PID" ]; then
-  if wait "$UI_PID"; then DEPLOYED="$DEPLOYED personalbase-ui"; \
-  else echo "[nc] ui deploy FAILED"; tail -5 "$NC_RUN_DIR/deploy-ui.log"; fi
 fi
 NC_DEPLOYED="$DEPLOYED" node -e "
 const { readFileSync, writeFileSync } = require('node:fs');

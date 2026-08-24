@@ -1,13 +1,14 @@
 import { SpritesClient, type Sprite } from "@fly/sprites";
 import { z } from "zod";
-import type { Reactor, ReactorEvent } from "@nc/process";
+import type { Sql } from "@nc/log";
+import { enqueueJob, type Reactor, type ReactorEvent } from "@nc/process";
 
 // Hosts the main UI on a long-lived sprite so access rides Fly's org SSO —
-// the same browser sign-in the dev-preview URLs use — instead of a copied
-// password. Cron: every 15 minutes it compares trunk's sha (one GitHub API
-// call) against the deployed sha in reactor state and no-ops when nothing
-// landed; on change it resyncs the sprite, rebuilds, and replaces the
-// service, so the deployment tracks main by itself. Enqueue manually with
+// the same browser sign-in the dev-preview URLs use. This is the ONLY remote
+// door to the UI: nothing binds a public port (see CLAUDE.md). The daemon
+// polls trunk's sha every ~10s via enqueueMainUiIfTrunkMoved (a pure GitHub
+// API read; no job/run rows unless trunk actually moved) and enqueues this
+// reactor to resync/rebuild/replace the service. Enqueue manually with
 // {force: true} to redeploy without a new commit (e.g. after service-def
 // changes). Deliberately self-contained (SpritesClient directly) rather than
 // extending the dev-agent Sandbox interface: this is a deployment target,
@@ -77,10 +78,44 @@ async function trunkSha(repo: string, trunk: string, githubToken: string): Promi
   return (await response.text()).trim();
 }
 
+/**
+ * The daemon's 10s trigger: one GitHub API call compares trunk's sha with
+ * the reactor's deployed-sha state and enqueues a resync job only on change.
+ * Skips while a main-ui job is pending/running, and backs off for 10 minutes
+ * after a failed run so a broken build can't hot-loop sprite execs.
+ */
+export async function enqueueMainUiIfTrunkMoved(sql: Sql): Promise<boolean> {
+  const githubToken = required("GITHUB_TOKEN");
+  const repo = process.env["DEV_REPO"] ?? "agajews/personalbase";
+  const trunk = process.env["DEV_TRUNK"] ?? "main";
+  const wantSha = await trunkSha(repo, trunk, githubToken);
+  const stateRows = await sql`
+    select state from process_state where process = 'reactor:main-ui'`;
+  const state = mainUiState.safeParse(stateRows[0]?.["state"]);
+  if (state.success && state.data.deployedSha === wantSha) {
+    return false;
+  }
+  const blocked = await sql`
+    select 1 from jobs
+    where process = 'reactor:main-ui' and status in ('pending', 'running')
+    union all
+    select 1 from runs
+    where process = 'reactor:main-ui' and status = 'failed'
+      and started_at > now() - interval '10 minutes'
+      and started_at = (select max(started_at) from runs where process = 'reactor:main-ui')
+    limit 1`;
+  if (blocked.length > 0) {
+    return false;
+  }
+  await enqueueJob(sql, "reactor:main-ui", {});
+  console.log(`main-ui: trunk moved to ${wantSha.slice(0, 8)}, resync enqueued`);
+  return true;
+}
+
 export const mainUiReactor: Reactor = {
   kind: "reactor",
   name: "main-ui",
-  trigger: { kind: "cron", schedule: { intervalHours: 0.25 }, payload: {} },
+  trigger: { kind: "manual" },
   async run(ctx, input): Promise<ReactorEvent[]> {
     if (input.kind !== "job") {
       throw new Error("main-ui only supports job triggers");

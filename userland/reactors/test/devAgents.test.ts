@@ -142,7 +142,6 @@ const config = (): DevConfig => ({
   githubToken: "gh-token",
   anthropicApiKey: "api-key",
   flyDeployTokenWorker: "fly-worker",
-  flyDeployTokenUi: "fly-ui",
   previewDatabaseUrl: "postgres://readonly@example/db",
 });
 
@@ -336,13 +335,15 @@ describe("dev-agent live sessions", () => {
     const mergeBox = boxes.get(mergeStart.sandbox)!;
     const mergeTurn = mergeBox.run(runDirFor(mergeStart.runUid));
     expect(mergeTurn.env["DEV_PR_NUMBER"]).toBe("7");
-    expect(mergeTurn.env["FLY_DEPLOY_TOKEN_UI"]).toBe("fly-ui");
+    expect(mergeTurn.env["FLY_DEPLOY_TOKEN_WORKER"]).toBe("fly-worker");
+    // The UI is not a Fly app anymore (it rides the nc-main-ui sprite).
+    expect(mergeTurn.env["FLY_DEPLOY_TOKEN_UI"]).toBeUndefined();
 
     mergeTurn.log = "[nc] merged\n";
     mergeTurn.exitCode = 0;
     mergeTurn.result = {
       mergedSha: "abc123",
-      deployed: ["personalbase-worker", "personalbase-ui"],
+      deployed: ["personalbase-worker"],
     };
     expect(await pass()).toBe(1);
 

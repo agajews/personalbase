@@ -72,7 +72,7 @@ export {
   type TitleResult,
 } from "./devagents/titler.js";
 export { resurfacerReactor, resurfacerJobPayload } from "./resurfacer.js";
-export { mainUiReactor, mainUiJobPayload } from "./mainUi.js";
+export { mainUiReactor, mainUiJobPayload, enqueueMainUiIfTrunkMoved } from "./mainUi.js";
 export {
   questionWriterReactor,
   makeQuestionWriterReactor,

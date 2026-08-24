@@ -10,6 +10,7 @@ import {
   type Sql,
 } from "@nc/log";
 import { coreRegistry } from "@nc/schema";
+import { enqueueMainUiIfTrunkMoved } from "@nc/reactors";
 import {
   catchUpEventReactors,
   catchUpFolds,
@@ -422,7 +423,26 @@ async function cmdDaemon(): Promise<void> {
         await sleep(2000);
       }
     };
-    await Promise.all([foldLoop(), jobPump()]);
+    // Trunk watcher: a pure GitHub API read every 10s that enqueues the
+    // main-ui resync only when main actually moved — pushes reach the sprite
+    // deployment in seconds without webhooks (CLAUDE.md: no public ports).
+    const trunkWatch = async (): Promise<never> => {
+      if ((process.env["GITHUB_TOKEN"] ?? "") === "") {
+        console.log("trunk watcher off (GITHUB_TOKEN not set)");
+        return new Promise<never>(() => {});
+      }
+      while (true) {
+        try {
+          await enqueueMainUiIfTrunkMoved(sql);
+        } catch (error) {
+          console.error(
+            `trunk watch failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        await sleep(10_000);
+      }
+    };
+    await Promise.all([foldLoop(), jobPump(), trunkWatch()]);
   });
 }
 
