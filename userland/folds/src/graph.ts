@@ -3,6 +3,7 @@ import {
   agentPaperAffiliationsExtractedV1,
   arxivPaperIngestedV1,
   paperpileItemImportedV1,
+  userResourceCapturedV1,
   type PaperpileItemImported,
 } from "@nc/schema";
 import type { Fold } from "@nc/process";
@@ -186,6 +187,19 @@ function fold(batch: Batch, event: StoredEvent): void {
     }
     return;
   }
+  if (event.type === "user.resource.captured") {
+    const r = userResourceCapturedV1.parse(event.payload);
+    // Same ref shape as URL-identified library items, so a capture and a
+    // later Paperpile import of the same page converge on one entity.
+    const entity = batch.entity("resource", `url:${r.url}`, r.title, event.seq);
+    batch.identifier({
+      scheme: "url",
+      value: r.url,
+      entityId: entity,
+      assertedBy: event.source,
+    });
+    return;
+  }
   if (event.type === "agent.paper.affiliations_extracted") {
     const e = agentPaperAffiliationsExtractedV1.parse(event.payload);
     const paper = batch.entity("paper", paperRef(e.arxivId), null, event.seq);
@@ -229,12 +243,13 @@ function fold(batch: Batch, event: StoredEvent): void {
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 5, // batched apply; entities.ref column
+  version: 6, // captured web resources
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",
     "agent.paper.affiliations_extracted",
     "paperpile.item.imported",
+    "user.resource.captured",
   ],
   tables: ["entities", "identifiers", "links"],
   async init(tx) {

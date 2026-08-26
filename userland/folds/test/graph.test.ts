@@ -104,4 +104,29 @@ describe("graph fold", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!["asserted_by"]).toBe("reactor:lab-publications");
   });
+
+  test("captured pages mint resource entities with a url identifier", async () => {
+    const url = "https://example.com/great-post";
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.resource.captured",
+        schemaVersion: 1,
+        source: "ui:capture",
+        occurredAt: "2026-08-20T03:00:00.000Z",
+        payload: { url, title: "A Great Post", siteName: "Example Blog" },
+        idempotencyKey: `capture:${url}`,
+      },
+    ]);
+    await catchUpFold(sql, coreRegistry, graphFold);
+
+    const entity = (await sql`
+      select entity_id, kind, display_name from entities where ref = ${"url:" + url}`)[0]!;
+    expect(entity["kind"]).toBe("resource");
+    expect(entity["display_name"]).toBe("A Great Post");
+    expect(entity["entity_id"]).toBe(entityId("resource", `url:${url}`));
+
+    const idents = await sql`
+      select scheme, value from identifiers where entity_id = ${entity["entity_id"]}`;
+    expect(idents).toEqual([{ scheme: "url", value: url }]);
+  });
 });
