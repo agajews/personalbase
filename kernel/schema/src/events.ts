@@ -90,6 +90,20 @@ export const paperpileItemImportedV1 = z.object({
 });
 export type PaperpileItemImported = z.infer<typeof paperpileItemImportedV1>;
 
+/**
+ * A page saved from the browser (the capture extension). arXiv URLs never
+ * take this path — they go through the arxiv reactor so papers carry the
+ * same canonical metadata as the daily sweep. `url` is normalized by the
+ * capture endpoint (no fragment, no tracking params).
+ */
+export const userResourceCapturedV1 = z.object({
+  url: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  siteName: z.string().optional(),
+});
+export type UserResourceCaptured = z.infer<typeof userResourceCapturedV1>;
+
 export const userPaperMarkedV1 = z.object({
   arxivId: z.string().min(1),
   /** Tiers: none < saved < want_to_read. Latest event per paper wins. */
@@ -360,6 +374,7 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
     versions: [{ schema: agentPaperAffiliationsExtractedV1 }],
   },
   { type: "paperpile.item.imported", versions: [{ schema: paperpileItemImportedV1 }] },
+  { type: "user.resource.captured", versions: [{ schema: userResourceCapturedV1 }] },
   {
     type: "user.paper.marked",
     versions: [

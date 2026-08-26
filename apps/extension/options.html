@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>personalbase capture — options</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+        color: #1b2420;
+        background: #edefea;
+        max-width: 460px;
+        margin: 40px auto;
+      }
+      label {
+        display: block;
+        margin: 14px 0 4px;
+        font-weight: 600;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 6px 9px;
+        border: 1px solid #d9ddd3;
+        border-radius: 6px;
+        background: #fbfcf9;
+        font: inherit;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 16px;
+        padding: 7px 13px;
+        border: 1px solid #24413b;
+        border-radius: 6px;
+        background: #24413b;
+        color: #f2f6f2;
+        font: inherit;
+        cursor: pointer;
+      }
+      #status {
+        margin-left: 10px;
+        color: #68726c;
+      }
+      p.hint {
+        color: #68726c;
+        font-size: 12.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>personalbase capture</h2>
+    <label for="baseUrl">personalbase URL</label>
+    <input id="baseUrl" type="url" placeholder="https://nc-main-ui-….sprites.app" />
+    <p class="hint">
+      The sprite UI URL (auth rides your Fly SSO sign-in) or http://127.0.0.1:4680
+      for local dev.
+    </p>
+    <label for="mark">Save as</label>
+    <select id="mark">
+      <option value="saved">saved</option>
+      <option value="want_to_read">want to read</option>
+    </select>
+    <button id="save">Save</button><span id="status"></span>
+    <script src="options.js"></script>
+  </body>
+</html>

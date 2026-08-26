@@ -17,6 +17,8 @@ export {
   paperpileItemImportedV1,
   userPaperMarkedV1,
   userPaperMarkedV2,
+  userResourceCapturedV1,
+  type UserResourceCaptured,
   userDevtaskCreatedV1,
   userDevmessageSentV1,
   userDevtaskArchivedV1,

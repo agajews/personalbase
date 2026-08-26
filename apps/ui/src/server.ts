@@ -14,6 +14,7 @@ import { coreRegistry } from "@nc/schema";
 import { catchUpFolds, enqueueJob } from "@nc/process";
 import { streamSSE } from "hono/streaming";
 import { streamChat } from "./chat.js";
+import { arxivIdFromUrl, normalizeCaptureUrl } from "./capture.js";
 import {
   entityId,
   filterResultsFold,
@@ -777,6 +778,73 @@ app.post("/api/mark", async (c) => {
   ]);
   await catchUpFolds(sql, coreRegistry, folds);
   return c.json({ ok: true });
+});
+
+const captureBody = z.object({
+  url: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  siteName: z.string().optional(),
+  mark: z.enum(["saved", "want_to_read"]).default("saved"),
+});
+
+// One-click save from the browser extension. arXiv pages become papers via
+// the arxiv reactor (identical canonical metadata to the daily sweep — the
+// mark lands immediately because entity ids are minted deterministically
+// from the ref, so it applies as soon as the ingest job's events fold in).
+// Everything else becomes a captured resource entity. Auth is the transport
+// (SSO-gated sprite URL or loopback), same as every other route.
+app.post("/api/capture", async (c) => {
+  const body = captureBody.parse(await c.req.json());
+  const now = new Date().toISOString();
+  const arxivId = arxivIdFromUrl(body.url);
+  if (arxivId !== null) {
+    const ref = paperRef(arxivId);
+    await appendEvents(sql, coreRegistry, [
+      {
+        type: "user.paper.marked",
+        schemaVersion: 2,
+        source: "ui:capture",
+        occurredAt: now,
+        payload: { target: { kind: "paper", ref }, mark: body.mark },
+      },
+    ]);
+    await enqueueJob(sql, "reactor:arxiv", { ids: [arxivId] });
+    await catchUpFolds(sql, coreRegistry, folds);
+    return c.json({ kind: "paper", entityId: entityId("paper", ref), arxivId });
+  }
+  const title = body.title?.trim() ?? "";
+  if (title === "") {
+    return c.json({ error: "title is required for non-arxiv captures" }, 400);
+  }
+  const url = normalizeCaptureUrl(body.url);
+  const ref = `url:${url}`;
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.resource.captured",
+      schemaVersion: 1,
+      source: "ui:capture",
+      occurredAt: now,
+      payload: {
+        url,
+        title,
+        ...(body.description === undefined ? {} : { description: body.description }),
+        ...(body.siteName === undefined ? {} : { siteName: body.siteName }),
+      },
+      // Re-saving the same page is a no-op for the capture fact; the mark
+      // below still applies (e.g. upgrading saved -> want_to_read).
+      idempotencyKey: `capture:${url}`,
+    },
+    {
+      type: "user.paper.marked",
+      schemaVersion: 2,
+      source: "ui:capture",
+      occurredAt: now,
+      payload: { target: { kind: "resource", ref }, mark: body.mark },
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  return c.json({ kind: "resource", entityId: entityId("resource", ref), title });
 });
 
 app.get("/api/categories", async (c) => {
