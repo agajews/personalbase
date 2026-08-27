@@ -17,6 +17,18 @@ instead of the button layer, retries become safe everywhere (flaky mobile
 connections included), and the pattern should be the default for every future
 user-action endpoint.
 
+## Reclaim jobs orphaned by worker restarts
+
+A claimed job stays `running` forever if the worker dies mid-run — there is
+no lease or stale-claim sweep in `kernel/process/src/jobs.ts`. Every worker
+deploy is such a death: the 2026-08-27 deploy orphaned an in-flight
+paper-filter judging job (reset to pending by hand). Fix shape: claims carry
+a heartbeat (`claimed_at` refreshed periodically, or a `lease_until`), and
+the pump requeues jobs whose lease expired — attempts already count, so a
+poison job still dies at maxAttempts. Runs stuck `running` from the same
+deaths should be closed too (the 2026-08-24 starvation-era rows still show
+`running`).
+
 ## Warm golden-checkpoint sandboxes
 
 Cold dev-agent launch spends ~2–4 minutes on npm (pnpm bootstrap, dependency
