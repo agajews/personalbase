@@ -47,10 +47,9 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
     // Judging reacts to papers arriving rather than running on a clock. Each
     // ingested-paper event schedules one shared sweep job (hourly dedupe
     // bucket) instead of judging inline, because judging batches 12 papers
-    // per LLM call; the delay gives the papers fold time to catch up before
-    // the sweep queries it. Already-judged (filter, prompt_hash, paper)
-    // triples are skipped, so sweeps only pay for genuinely new papers or
-    // edited prompts.
+    // per LLM call; the delay collapses a burst of arrivals into one sweep.
+    // Already-judged (filter, prompt_hash, paper) triples are skipped, so
+    // sweeps only pay for genuinely new papers or edited prompts.
     trigger: { kind: "event", consumes: ["arxiv.paper.ingested"] },
     async run(ctx, input): Promise<ReactorResult> {
       if (input.kind === "event") {
@@ -91,19 +90,40 @@ export function makePaperFilterReactor(judge: JudgeFn): Reactor {
       const events: ReactorEvent[] = [];
       for (const filter of filters) {
         const papers: PaperForJudging[] = (
-          await ctx.sql`
-            select p.arxiv_id, p.title, p.abstract, p.categories
-            from papers p
-            where ((p.ingested_at >= ${payload.from} and p.ingested_at < ${payload.to})
-                or (${!byArrivalOnly}
-                    and p.updated_at >= ${payload.from} and p.updated_at < ${payload.to}))
-              and not exists (
-                select 1 from filter_results r
-                where r.filter_name = ${filter.name}
-                  and r.prompt_hash = ${filter.prompt_hash}
-                  and r.arxiv_id = p.arxiv_id
-              )
-            order by p.updated_at`
+          byArrivalOnly
+            ? // The arrival sweep fires ~60s after ingestion, when the papers
+              // fold may not have applied the new events yet (it lost that
+              // race once and the sweep silently judged nothing). The event
+              // log is append-time consistent, so read arrivals straight from
+              // it; distinct-on keeps the latest version of each paper.
+              await ctx.sql`
+                select distinct on (payload->>'arxivId')
+                  payload->>'arxivId' as arxiv_id,
+                  payload->>'title' as title,
+                  payload->>'abstract' as abstract,
+                  payload->'categories' as categories
+                from events
+                where type = 'arxiv.paper.ingested'
+                  and recorded_at >= ${payload.from} and recorded_at < ${payload.to}
+                  and not exists (
+                    select 1 from filter_results r
+                    where r.filter_name = ${filter.name}
+                      and r.prompt_hash = ${filter.prompt_hash}
+                      and r.arxiv_id = payload->>'arxivId'
+                  )
+                order by payload->>'arxivId', recorded_at desc`
+            : await ctx.sql`
+                select p.arxiv_id, p.title, p.abstract, p.categories
+                from papers p
+                where ((p.ingested_at >= ${payload.from} and p.ingested_at < ${payload.to})
+                    or (p.updated_at >= ${payload.from} and p.updated_at < ${payload.to}))
+                  and not exists (
+                    select 1 from filter_results r
+                    where r.filter_name = ${filter.name}
+                      and r.prompt_hash = ${filter.prompt_hash}
+                      and r.arxiv_id = p.arxiv_id
+                  )
+                order by p.updated_at`
         ).map((row) => ({
           arxivId: row["arxiv_id"],
           title: row["title"],

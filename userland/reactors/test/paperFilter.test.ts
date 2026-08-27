@@ -168,6 +168,22 @@ describe("paper-filter reactor", () => {
     expect(result.emitted).toBe(3);
   });
 
+  test("the arrival sweep sees papers the papers fold hasn't applied yet", async () => {
+    // Land the previous sweep's judgments so only the new paper is unjudged.
+    await catchUpFolds(sql, coreRegistry, folds);
+    await appendEvents(sql, coreRegistry, [
+      paperEvent("2508.00003", "State space fold race", new Date().toISOString()),
+    ]);
+    // Deliberately no fold catch-up: the sweep fires ~60s after ingestion
+    // and must judge the paper even when the papers fold is behind.
+    const result = await runReactor(sql, coreRegistry, reactor, {
+      kind: "job",
+      payload: { filter: "arrivals" },
+    });
+    expect(result.emitted).toBe(1);
+    await catchUpFolds(sql, coreRegistry, folds);
+  });
+
   test("naming a missing filter is an error", async () => {
     await expect(
       runReactor(sql, coreRegistry, reactor, {
