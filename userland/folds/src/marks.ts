@@ -1,14 +1,20 @@
-import { paperpileItemImportedV1, userPaperMarkedV2 } from "@nc/schema";
+import {
+  paperpileItemImportedV1,
+  userLinkSubmittedV1,
+  userPaperMarkedV2,
+} from "@nc/schema";
 import type { Fold } from "@nc/process";
-import type { TransactionSql } from "@nc/log";
+import type { StoredEvent, TransactionSql } from "@nc/log";
 import { entityId } from "./ids.js";
-import { libraryItemEntity } from "./graph.js";
+import { libraryItemEntity, submittedLinkEntity } from "./graph.js";
 
 // Marks: none < saved < want_to_read, on any paper or resource entity.
 // Explicit user marks always win (latest event per entity); library imports
 // auto-save an item only when no mark exists, so an import can never
-// downgrade a want_to_read. Import runs are bulk-inserted; the rare user
-// marks are applied individually, with buffer flushes preserving seq order.
+// downgrade a want_to_read. Pasting a link is an explicit mark too — the
+// tier it carries is the reason the user pasted it. Import runs are
+// bulk-inserted; the rare user marks are applied individually, with buffer
+// flushes preserving seq order.
 
 interface ImportRow {
   entityId: string;
@@ -42,11 +48,33 @@ async function flushImports(tx: TransactionSql, buffer: ImportRow[]): Promise<vo
   buffer.length = 0;
 }
 
+/** One explicit user mark, latest event per entity winning. */
+async function applyUserMark(
+  tx: TransactionSql,
+  id: string,
+  mark: string,
+  event: StoredEvent,
+): Promise<void> {
+  if (mark === "none") {
+    await tx`delete from paper_marks where entity_id = ${id}`;
+    return;
+  }
+  await tx`
+    insert into paper_marks (entity_id, mark, source, marked_at, marked_seq)
+    values (${id}, ${mark}, ${event.source}, ${event.occurredAt.toISOString()},
+            ${event.seq.toString()})
+    on conflict (entity_id) do update set
+      mark = excluded.mark,
+      source = excluded.source,
+      marked_at = excluded.marked_at,
+      marked_seq = excluded.marked_seq`;
+}
+
 export const marksFold: Fold = {
   kind: "fold",
   name: "marks",
-  version: 2, // entity-target marks (any paper or resource), batched apply
-  consumes: ["user.paper.marked", "paperpile.item.imported"],
+  version: 3, // pasted links carry their own mark
+  consumes: ["user.paper.marked", "paperpile.item.imported", "user.link.submitted"],
   tables: ["paper_marks"],
   async init(tx) {
     await tx`
@@ -76,21 +104,15 @@ export const marksFold: Fold = {
       if (event.type === "user.paper.marked") {
         // Payloads arrive upcast to v2 (v1 carried a bare arXiv id).
         const m = userPaperMarkedV2.parse(event.payload);
-        const id = entityId(m.target.kind, m.target.ref);
         await flushImports(tx, importBuffer); // preserve seq order vs imports
-        if (m.mark === "none") {
-          await tx`delete from paper_marks where entity_id = ${id}`;
-        } else {
-          await tx`
-            insert into paper_marks (entity_id, mark, source, marked_at, marked_seq)
-            values (${id}, ${m.mark}, ${event.source}, ${event.occurredAt.toISOString()},
-                    ${event.seq.toString()})
-            on conflict (entity_id) do update set
-              mark = excluded.mark,
-              source = excluded.source,
-              marked_at = excluded.marked_at,
-              marked_seq = excluded.marked_seq`;
-        }
+        await applyUserMark(tx, entityId(m.target.kind, m.target.ref), m.mark, event);
+        continue;
+      }
+      if (event.type === "user.link.submitted") {
+        const link = userLinkSubmittedV1.parse(event.payload);
+        const target = submittedLinkEntity(link.url);
+        await flushImports(tx, importBuffer);
+        await applyUserMark(tx, entityId(target.kind, target.ref), link.mark, event);
         continue;
       }
       throw new Error(`marks fold received unexpected event type ${event.type}`);

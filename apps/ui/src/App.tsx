@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, graphModeLabels, type AppState, type GraphMode } from "./api.js";
 import { ago, HashChip, navTo } from "./ui.js";
+import { LinkBox } from "./LinkBox.js";
 import { FeedView } from "./views/FeedView.js";
 import { FilterView } from "./views/FilterView.js";
 import { EntityView } from "./views/EntityView.js";
@@ -155,6 +156,8 @@ export function App() {
 
       <div className="columns">
         <aside>
+          <LinkBox onSubmitted={refresh} />
+
           <form
             className="search-form"
             onSubmit={(e) => {

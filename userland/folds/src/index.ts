@@ -1,5 +1,14 @@
 export { entityId } from "./ids.js";
-export { graphFold, libraryItemEntity, normalizeArxivId, paperRef, personRef } from "./graph.js";
+export {
+  arxivIdFromUrl,
+  graphFold,
+  libraryItemEntity,
+  normalizeArxivId,
+  normalizeSubmittedUrl,
+  paperRef,
+  personRef,
+  submittedLinkEntity,
+} from "./graph.js";
 export { libraryFold } from "./library.js";
 export { marksFold } from "./marks.js";
 export { devFold } from "./dev.js";

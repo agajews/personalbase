@@ -3,6 +3,8 @@ import {
   agentPaperAffiliationsExtractedV1,
   arxivPaperIngestedV1,
   paperpileItemImportedV1,
+  userLinkSubmittedV1,
+  webPageIngestedV1,
   type PaperpileItemImported,
 } from "@nc/schema";
 import type { Fold } from "@nc/process";
@@ -31,6 +33,55 @@ export function normalizeArxivId(id: string): string {
 
 export function paperRef(arxivId: string): string {
   return `arxiv:${normalizeArxivId(arxivId)}`;
+}
+
+// arxiv.org/abs/2508.12345v2, /pdf/2508.12345.pdf, /html/…, and the old
+// slashed ids (hep-th/9901001) all name the same paper.
+const arxivUrlPattern =
+  /^https?:\/\/(?:www\.|export\.)?arxiv\.org\/(?:abs|pdf|html)\/([^?#]+?)(?:\.pdf)?\/?$/i;
+
+/** The arXiv id a URL points at, or null when it points somewhere else. */
+export function arxivIdFromUrl(url: string): string | null {
+  const match = arxivUrlPattern.exec(url.trim());
+  return match === null ? null : normalizeArxivId(match[1]!);
+}
+
+/**
+ * Where a pasted link lands in the graph. arXiv links converge on the paper
+ * arXiv ingestion already owns rather than minting a second entity for it;
+ * everything else is a resource keyed by its URL, the same ref library
+ * items use.
+ */
+export function submittedLinkEntity(url: string): { kind: string; ref: string } {
+  const arxivId = arxivIdFromUrl(url);
+  if (arxivId !== null) {
+    return { kind: "paper", ref: paperRef(arxivId) };
+  }
+  return { kind: "resource", ref: `url:${url}` };
+}
+
+/**
+ * Tidies what a human pasted into a URL: surrounding whitespace, and a bare
+ * host with no scheme. Deliberately nothing else — refs are compared as
+ * written, so any further rewriting would fork the entity for a link the
+ * library already holds. Null when the result still isn't a URL.
+ */
+export function normalizeSubmittedUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+  return withScheme;
 }
 
 const scholarlyPubtypes = new Set([
@@ -186,6 +237,20 @@ function fold(batch: Batch, event: StoredEvent): void {
     }
     return;
   }
+  if (event.type === "user.link.submitted") {
+    const link = userLinkSubmittedV1.parse(event.payload);
+    const target = submittedLinkEntity(link.url);
+    // The entity exists from the moment the link is pasted, so the mark it
+    // carries is never an orphan. It has no name yet — the ingestion event
+    // below supplies one, and until then the UI shows the URL.
+    batch.entity(target.kind, target.ref, null, event.seq);
+    return;
+  }
+  if (event.type === "web.page.ingested") {
+    const page = webPageIngestedV1.parse(event.payload);
+    batch.entity("resource", `url:${page.url}`, page.title, event.seq);
+    return;
+  }
   if (event.type === "agent.paper.affiliations_extracted") {
     const e = agentPaperAffiliationsExtractedV1.parse(event.payload);
     const paper = batch.entity("paper", paperRef(e.arxivId), null, event.seq);
@@ -229,12 +294,14 @@ function fold(batch: Batch, event: StoredEvent): void {
 export const graphFold: Fold = {
   kind: "fold",
   name: "graph",
-  version: 5, // batched apply; entities.ref column
+  version: 6, // pasted links and the pages they resolve to
   consumes: [
     "arxiv.paper.ingested",
     "agent.link.asserted",
     "agent.paper.affiliations_extracted",
     "paperpile.item.imported",
+    "user.link.submitted",
+    "web.page.ingested",
   ],
   tables: ["entities", "identifiers", "links"],
   async init(tx) {
