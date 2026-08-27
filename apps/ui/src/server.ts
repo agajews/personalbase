@@ -804,7 +804,7 @@ app.post("/api/links", async (c) => {
       schemaVersion: 1,
       source: "ui:web",
       occurredAt: new Date().toISOString(),
-      payload: { url, mark: body.mark ?? "want_to_read" },
+      payload: { url, mark: body.mark ?? "saved" },
     },
   ]);
   await catchUpFolds(sql, coreRegistry, folds);
@@ -1497,6 +1497,15 @@ app.get("/api/chats/:uid", async (c) => {
 
 app.onError((error, c) => {
   console.error(error);
+  // A preview holds the read-only database role, so every write surfaces as a
+  // bare "permission denied for table events" (SQLSTATE 42501). Say what
+  // actually happened rather than making the reader translate Postgres.
+  if (previewMode && (error as { code?: string }).code === "42501") {
+    return c.json(
+      { error: "this preview is read-only — nothing typed here is saved" },
+      403,
+    );
+  }
   return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
 });
 

@@ -11,8 +11,7 @@ import { libraryItemEntity, submittedLinkEntity } from "./graph.js";
 // Marks: none < saved < want_to_read, on any paper or resource entity.
 // Explicit user marks always win (latest event per entity); library imports
 // auto-save an item only when no mark exists, so an import can never
-// downgrade a want_to_read. Pasting a link is an explicit mark too — the
-// tier it carries is the reason the user pasted it. Import runs are
+// downgrade a want_to_read, and neither can pasting a link. Import runs are
 // bulk-inserted; the rare user marks are applied individually, with buffer
 // flushes preserving seq order.
 
@@ -70,10 +69,41 @@ async function applyUserMark(
       marked_seq = excluded.marked_seq`;
 }
 
+/**
+ * A pasted link files itself in the library at the tier it carries, and only
+ * ever upward: re-pasting something you had shortlisted must not demote it to
+ * plain saved. Recency still moves, so a re-paste bubbles the item back up.
+ * An explicit `none` is a removal, not a tier.
+ */
+async function applySubmittedMark(
+  tx: TransactionSql,
+  id: string,
+  mark: string,
+  event: StoredEvent,
+): Promise<void> {
+  if (mark === "none") {
+    await tx`delete from paper_marks where entity_id = ${id}`;
+    return;
+  }
+  await tx`
+    insert into paper_marks (entity_id, mark, source, marked_at, marked_seq)
+    values (${id}, ${mark}, ${event.source}, ${event.occurredAt.toISOString()},
+            ${event.seq.toString()})
+    on conflict (entity_id) do update set
+      mark = case
+        when paper_marks.mark = 'saved' and excluded.mark = 'want_to_read'
+          then excluded.mark
+        else paper_marks.mark
+      end,
+      source = excluded.source,
+      marked_at = excluded.marked_at,
+      marked_seq = excluded.marked_seq`;
+}
+
 export const marksFold: Fold = {
   kind: "fold",
   name: "marks",
-  version: 3, // pasted links carry their own mark
+  version: 3, // pasted links file themselves, never downgrading a shortlist
   consumes: ["user.paper.marked", "paperpile.item.imported", "user.link.submitted"],
   tables: ["paper_marks"],
   async init(tx) {
@@ -112,7 +142,7 @@ export const marksFold: Fold = {
         const link = userLinkSubmittedV1.parse(event.payload);
         const target = submittedLinkEntity(link.url);
         await flushImports(tx, importBuffer);
-        await applyUserMark(tx, entityId(target.kind, target.ref), link.mark, event);
+        await applySubmittedMark(tx, entityId(target.kind, target.ref), link.mark, event);
         continue;
       }
       throw new Error(`marks fold received unexpected event type ${event.type}`);

@@ -3,7 +3,7 @@ import { api, type SubmittedLink } from "./api.js";
 import { urlLabel } from "./ui.js";
 
 // The rail's paste-a-link box. Submitting appends user.link.submitted — the
-// URL and the want-to-read tier in one fact — and the entity exists by the
+// URL and the tier it lands on in one fact — and the entity exists by the
 // time the response lands, so the row below the box links straight at it.
 // Its title arrives seconds later, when reactor:link-ingest has read the
 // page, so each fresh row polls its entity until it has a name.
@@ -90,7 +90,7 @@ export function LinkBox({ onSubmitted }: { onSubmitted: () => void }) {
           disabled={busy}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="Paste a link, hit enter"
-          aria-label="Paste a link to read later"
+          aria-label="Paste a link to save"
         />
       </form>
       {error !== null && <div className="link-box-error">{error}</div>}
@@ -98,7 +98,7 @@ export function LinkBox({ onSubmitted }: { onSubmitted: () => void }) {
         <a key={link.entityId} className="pasted-link" href={`#/entity/${link.entityId}`}>
           <span className="pasted-name">{link.title ?? urlLabel(link.url)}</span>
           <span className="pasted-status">
-            {link.title === null ? "reading the page…" : "want to read"}
+            {link.title === null ? "reading the page…" : "saved"}
           </span>
         </a>
       ))}

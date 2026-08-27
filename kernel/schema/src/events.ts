@@ -342,8 +342,8 @@ export type SurfaceDayResurfaced = z.infer<typeof surfaceDayResurfacedV1>;
  */
 export const userLinkSubmittedV1 = z.object({
   url: z.url(),
-  /** Pasting a link is an intent to read it, so that is the default tier. */
-  mark: z.enum(["saved", "want_to_read", "none"]).default("want_to_read"),
+  /** Pasting a link files it in the library; the shortlist stays deliberate. */
+  mark: z.enum(["saved", "want_to_read", "none"]).default("saved"),
 });
 export type UserLinkSubmitted = z.infer<typeof userLinkSubmittedV1>;
 

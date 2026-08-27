@@ -11,7 +11,7 @@ const ctx = {
   recordUsage: () => undefined,
 } satisfies ReactorCtx;
 
-function submitted(url: string, mark = "want_to_read"): StoredEvent {
+function submitted(url: string, mark = "saved"): StoredEvent {
   return {
     seq: 1n,
     eventUid: "11111111-1111-4111-8111-111111111111",
@@ -46,6 +46,8 @@ describe("normalizeSubmittedUrl", () => {
   test("rejects what isn't a link", () => {
     expect(normalizeSubmittedUrl("   ")).toBeNull();
     expect(normalizeSubmittedUrl("how do transformers work")).toBeNull();
+    expect(normalizeSubmittedUrl("nope")).toBeNull(); // a bare word parses as a host
+    expect(normalizeSubmittedUrl("http://localhost:5173/x")).toBe("http://localhost:5173/x");
     expect(normalizeSubmittedUrl("javascript:alert(1)")).toBeNull();
     expect(normalizeSubmittedUrl("file:///etc/passwd")).toBeNull();
   });

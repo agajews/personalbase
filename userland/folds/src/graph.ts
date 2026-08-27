@@ -71,7 +71,8 @@ export function normalizeSubmittedUrl(raw: string): string | null {
   if (trimmed === "") {
     return null;
   }
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  const withScheme = hasScheme ? trimmed : `https://${trimmed}`;
   let parsed: URL;
   try {
     parsed = new URL(withScheme);
@@ -79,6 +80,12 @@ export function normalizeSubmittedUrl(raw: string): string | null {
     return null;
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+  // A bare word is a valid hostname to the URL parser, so a typo would
+  // otherwise become a resource entity. Demand a dot when we supplied the
+  // scheme ourselves; someone who typed http://localhost meant it.
+  if (!hasScheme && !parsed.hostname.includes(".")) {
     return null;
   }
   return withScheme;
