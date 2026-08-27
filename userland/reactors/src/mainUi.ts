@@ -124,6 +124,7 @@ export const mainUiReactor: Reactor = {
     const spritesToken = required("SPRITES_TOKEN");
     const githubToken = required("GITHUB_TOKEN");
     const databaseUrl = required("DATABASE_URL");
+    const anthropicApiKey = process.env["ANTHROPIC_API_KEY"]?.trim() || undefined;
     const repo = process.env["DEV_REPO"] ?? "agajews/personalbase";
     const trunk = process.env["DEV_TRUNK"] ?? "main";
     const wantSha = await trunkSha(repo, trunk, githubToken);
@@ -167,6 +168,10 @@ export const mainUiReactor: Reactor = {
         NC_TRUSTED_TRANSPORT: "1",
         HOST: "0.0.0.0",
         PORT: "4680",
+        // The operator chat calls Anthropic from the UI server. Optional so
+        // a keyless worker can still deploy the UI (chat degrades, not the
+        // whole app).
+        ...(anthropicApiKey === undefined ? {} : { ANTHROPIC_API_KEY: anthropicApiKey }),
       },
       // What the sprite's HTTPS URL proxies to.
       httpPort: 4680,
