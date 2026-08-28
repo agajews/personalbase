@@ -49,6 +49,8 @@ export interface MarkedItem {
   entityId: string;
   title: string | null;
   kind: string;
+  /** The ref the entity id was minted from ('url:…', 'arxiv:…'). */
+  ref: string;
   mark: Mark;
   markedAt: string;
   arxivId: string | null;
@@ -165,8 +167,16 @@ export interface EntityTagGroup {
   papers: { entityId: string; title: string | null; strength: number; mark: Mark | null }[];
 }
 
+/** What a pasted link turns into: the entity now, its title once fetched. */
+export interface SubmittedLink {
+  url: string;
+  entityId: string;
+  kind: string;
+  title: string | null;
+}
+
 export interface EntityPage {
-  entity: { entityId: string; kind: string; displayName: string | null };
+  entity: { entityId: string; kind: string; ref: string; displayName: string | null };
   mark: Mark | null;
   tags: ItemTag[];
   tagGroups: EntityTagGroup[];
@@ -483,6 +493,8 @@ export const api = {
   ingestLabs: (): Promise<unknown> => post("/api/jobs/labs", {}),
   mark: (entityId: string, mark: Mark | "none"): Promise<unknown> =>
     post("/api/mark", { entityId, mark }),
+  submitLink: (url: string): Promise<SubmittedLink> =>
+    post("/api/links", { url }) as Promise<SubmittedLink>,
   marked: (mark: Mark): Promise<{ mark: Mark; items: MarkedItem[] }> =>
     request(`/api/marked/${mark}`),
   devTasks: (): Promise<{ tasks: DevTaskListItem[] }> => request("/api/dev/tasks"),

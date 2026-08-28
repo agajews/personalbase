@@ -87,6 +87,12 @@ information_schema when unsure of a column.
    - Save / shortlist a paper: user.paper.marked v2
      {target: {kind: "paper"|"resource", ref: <entities.ref>}, mark:
      "saved"|"want_to_read"|"none"} — look the ref up in entities first.
+   - Add a web page Alex links to, that entities has no row for:
+     user.link.submitted v1 {url, mark} (mark defaults to "saved"; pass
+     "want_to_read" when Alex says so) — reactor:link-ingest fetches the
+     page's title (or, for an arxiv.org link, the paper itself through the
+     arXiv path) and the mark lands on the entity it resolves to. Prefer this
+     over marking a url: ref by hand, which leaves a nameless mark.
    - Define or edit a filter: user.filter.defined v1 {name, prompt, model}.
    - Start a background CODING agent that modifies this system itself:
      user.devtask.created v1 {title?, spec} — the dev pipeline picks it up,

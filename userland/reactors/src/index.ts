@@ -28,6 +28,14 @@ export {
 } from "./labPublications.js";
 export { parseArxivAtom, type ArxivEntry } from "./arxivAtom.js";
 export {
+  linkIngestReactor,
+  makeLinkIngestReactor,
+  extractMetadata,
+  fetchPageMetadata,
+  type PageFetcher,
+  type PageMetadata,
+} from "./linkIngest.js";
+export {
   makePaperFilterReactor,
   paperFilterReactor,
   paperFilterJobPayload,

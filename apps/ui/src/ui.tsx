@@ -223,6 +223,30 @@ export function TagChips({
   );
 }
 
+/**
+ * The URL behind a 'url:' ref. Every resource entity is keyed by its link, so
+ * the ref is both where a pasted page lives and — until reactor:link-ingest
+ * has fetched a title — what to call it.
+ */
+export function refUrl(ref: string): string | null {
+  return ref.startsWith("url:") ? ref.slice(4) : null;
+}
+
+/** A URL as a name: host and path, without the ceremony. */
+export function urlLabel(url: string): string {
+  return url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+}
+
+/**
+ * What to call an entity that has no display name yet — a link pasted seconds
+ * ago, whose page or arXiv record hasn't been fetched. Its ref is the most
+ * informative thing we hold; anything beats printing a uuid.
+ */
+export function refLabel(ref: string): string {
+  const url = refUrl(ref);
+  return url === null ? ref : urlLabel(url);
+}
+
 export function navTo(path: string): void {
   location.hash = path;
 }

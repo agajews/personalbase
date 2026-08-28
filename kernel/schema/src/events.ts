@@ -332,6 +332,36 @@ export const surfaceDayResurfacedV1 = z.object({
 });
 export type SurfaceDayResurfaced = z.infer<typeof surfaceDayResurfacedV1>;
 
+// ---- links pasted by hand ----
+
+/**
+ * A link the user pasted (the rail's box, or chat). The URL and the intent
+ * are the fact; the title arrives separately, fetched by reactor:link-ingest
+ * — as `web.page.ingested` for an ordinary page, or as the same
+ * `arxiv.paper.ingested` arXiv ingestion emits when the link is an arXiv one.
+ */
+export const userLinkSubmittedV1 = z.object({
+  url: z.url(),
+  /** Pasting a link files it in the library; the shortlist stays deliberate. */
+  mark: z.enum(["saved", "want_to_read", "none"]).default("saved"),
+});
+export type UserLinkSubmitted = z.infer<typeof userLinkSubmittedV1>;
+
+/**
+ * What a web page said about itself when we fetched it. `title` is null when
+ * the page carries none (a bare PDF, a page that blocks readers) — the URL
+ * stays the entity's name in that case.
+ */
+export const webPageIngestedV1 = z.object({
+  url: z.url(),
+  title: z.string().min(1).nullable(),
+  siteName: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  /** As printed by the page (article:published_time), when it prints one. */
+  publishedAt: z.iso.datetime({ offset: true }).optional(),
+});
+export type WebPageIngested = z.infer<typeof webPageIngestedV1>;
+
 /**
  * The day's study question (spaced repetition). questionUid doubles as the
  * chatUid of its solution-discussion chat, so the tutoring conversation
@@ -390,6 +420,8 @@ export const coreRegistry: SchemaRegistry = makeRegistry([
   },
   { type: "user.chat.message_sent", versions: [{ schema: userChatMessageSentV1 }] },
   { type: "agent.chat.replied", versions: [{ schema: agentChatRepliedV1 }] },
+  { type: "user.link.submitted", versions: [{ schema: userLinkSubmittedV1 }] },
+  { type: "web.page.ingested", versions: [{ schema: webPageIngestedV1 }] },
   { type: "surface.day.resurfaced", versions: [{ schema: surfaceDayResurfacedV1 }] },
   { type: "study.question.posed", versions: [{ schema: studyQuestionPosedV1 }] },
 ]);

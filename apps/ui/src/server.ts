@@ -16,6 +16,8 @@ import { streamSSE } from "hono/streaming";
 import { streamChat } from "./chat.js";
 import {
   entityId,
+  normalizeSubmittedUrl,
+  submittedLinkEntity,
   filterResultsFold,
   filtersFold,
   graphFold,
@@ -333,7 +335,7 @@ app.get("/api/feed", async (c) => {
   )[0]!["n"];
   const resurfacedRows = await sql`
     select ri.day, ri.position, ri.entity_id, e.kind,
-           coalesce(p.title, li.title, e.display_name) as title,
+           coalesce(p.title, li.title, e.display_name, e.ref) as title,
            coalesce(p.abstract, li.abstract) as abstract,
            coalesce(p.authors, li.authors, '[]'::jsonb) as authors,
            coalesce(p.categories, '[]'::jsonb) as categories,
@@ -487,7 +489,8 @@ app.get("/api/papers", async (c) => {
 app.get("/api/entity/:id", async (c) => {
   const id = c.req.param("id");
   const entityRows = await sql`
-    select entity_id, kind, display_name, created_seq from entities where entity_id = ${id}`;
+    select entity_id, kind, ref, display_name, created_seq from entities
+    where entity_id = ${id}`;
   const entity = entityRows[0];
   if (entity === undefined) {
     return c.json({ error: "no such entity" }, 404);
@@ -576,6 +579,7 @@ app.get("/api/entity/:id", async (c) => {
     entity: {
       entityId: entity["entity_id"],
       kind: entity["kind"],
+      ref: entity["ref"],
       displayName: entity["display_name"],
     },
     mark: markRow[0]?.["mark"] ?? null,
@@ -779,6 +783,42 @@ app.post("/api/mark", async (c) => {
   return c.json({ ok: true });
 });
 
+const linkBody = z.object({
+  url: z.string().min(1),
+  mark: z.enum(["saved", "want_to_read", "none"]).optional(),
+});
+
+// A pasted link. The event is the whole user action — the URL and the tier
+// it lands on — and reactor:link-ingest picks it up from the log to fetch
+// the title. Folding here means the entity and its mark exist by the time
+// this responds, so the rail can link straight at the thing.
+app.post("/api/links", async (c) => {
+  const body = linkBody.parse(await c.req.json());
+  const url = normalizeSubmittedUrl(body.url);
+  if (url === null) {
+    return c.json({ error: `not a link: ${body.url}` }, 400);
+  }
+  await appendEvents(sql, coreRegistry, [
+    {
+      type: "user.link.submitted",
+      schemaVersion: 1,
+      source: "ui:web",
+      occurredAt: new Date().toISOString(),
+      payload: { url, mark: body.mark ?? "saved" },
+    },
+  ]);
+  await catchUpFolds(sql, coreRegistry, folds);
+  const target = submittedLinkEntity(url);
+  const id = entityId(target.kind, target.ref);
+  const known = await sql`select display_name from entities where entity_id = ${id}`;
+  return c.json({
+    url,
+    entityId: id,
+    kind: target.kind,
+    title: known[0]?.["display_name"] ?? null,
+  });
+});
+
 app.get("/api/categories", async (c) => {
   const rows = await sql`
     select c as name, count(*)::int as n
@@ -795,7 +835,7 @@ app.get("/api/marked/:mark", async (c) => {
   // The saved view includes the want_to_read tier above it.
   const marks = mark === "saved" ? ["saved", "want_to_read"] : ["want_to_read"];
   const rows = await sql`
-    select m.entity_id, m.mark, m.marked_at, e.display_name, e.kind,
+    select m.entity_id, m.mark, m.marked_at, e.display_name, e.kind, e.ref,
            p.arxiv_id, p.authors
     from paper_marks m
     join entities e on e.entity_id = m.entity_id
@@ -809,6 +849,7 @@ app.get("/api/marked/:mark", async (c) => {
       entityId: r["entity_id"],
       title: r["display_name"],
       kind: r["kind"],
+      ref: r["ref"],
       mark: r["mark"],
       markedAt: r["marked_at"],
       arxivId: r["arxiv_id"],
@@ -1456,6 +1497,15 @@ app.get("/api/chats/:uid", async (c) => {
 
 app.onError((error, c) => {
   console.error(error);
+  // A preview holds the read-only database role, so every write surfaces as a
+  // bare "permission denied for table events" (SQLSTATE 42501). Say what
+  // actually happened rather than making the reader translate Postgres.
+  if (previewMode && (error as { code?: string }).code === "42501") {
+    return c.json(
+      { error: "this preview is read-only — nothing typed here is saved" },
+      403,
+    );
+  }
   return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
 });
 

@@ -1,7 +1,17 @@
 import { useState } from "react";
 import { api, type EntityLink, type EntityTagGroup } from "../api.js";
 import { useCached } from "../cache.js";
-import { Abstract, ago, EntityChip, facetHue, MarkButtons, TagChips } from "../ui.js";
+import {
+  Abstract,
+  ago,
+  EntityChip,
+  facetHue,
+  MarkButtons,
+  refLabel,
+  refUrl,
+  TagChips,
+  urlLabel,
+} from "../ui.js";
 
 // One generic page for any entity: identity, kind-specific detail, and the
 // graph around it — every neighbor is a link to its own page.
@@ -146,6 +156,9 @@ export function EntityView({ id }: { id: string }) {
   const identifiers = page.identifiers.filter(
     (i) => paper === null || i.scheme !== "arxiv_id",
   );
+  // A resource is its link. Until reactor:link-ingest has read the page, the
+  // URL is also the only name it has.
+  const source = refUrl(entity.ref);
 
   return (
     <div className="entity-page">
@@ -153,7 +166,7 @@ export function EntityView({ id }: { id: string }) {
         {/* A paper announces itself — the kind label only earns its place on
             entities whose type isn't obvious from the page below. */}
         {entity.kind !== "paper" && <span className="entity-kind">{entity.kind}</span>}
-        <h1>{entity.displayName ?? entity.entityId}</h1>
+        <h1>{entity.displayName ?? refLabel(entity.ref)}</h1>
         {(entity.kind === "paper" || entity.kind === "resource") && (
           <MarkButtons entityId={entity.entityId} mark={page.mark} onChanged={refresh} />
         )}
@@ -168,6 +181,13 @@ export function EntityView({ id }: { id: string }) {
               className="affiliation-link"
             />
           ))}
+        </p>
+      )}
+      {source !== null && library === null && (
+        <p className="entity-source">
+          <a className="paper-link" href={source} target="_blank" rel="noreferrer">
+            {urlLabel(source)} ↗
+          </a>
         </p>
       )}
       <TagChips tags={page.tags} />

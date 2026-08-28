@@ -29,6 +29,21 @@ poison job still dies at maxAttempts. Runs stuck `running` from the same
 deaths should be closed too (the 2026-08-24 starvation-era rows still show
 `running`).
 
+## Library items whose arXiv-ness is only in their URL
+
+`libraryItemEntity` promotes an item to the `arxiv:<id>` paper entity when
+Paperpile recorded an `arxivId`, but not when the only evidence is the URL —
+so `url:https://arxiv.org/html/2405.13698v2` and friends sit in `entities` as
+resources beside the papers they are (2 of 111 resources today). A link pasted
+into the rail resolves arXiv URLs properly (`arxivIdFromUrl`), so pasting one
+of those papers now mints the *paper* entity next to the library's resource
+one: one work, two rows, both "saved". The fix is to run `arxivIdFromUrl` over
+`item.url` inside `libraryItemEntity` — but re-keying those items moves their
+marks, and any explicit `user.paper.marked` still naming the old `url:` ref
+becomes an orphan mark with no entity, which is the failure this ingestion
+path was built to stop. So: do it with a correction pass over those marks,
+not as a bare precedence change.
+
 ## Warm golden-checkpoint sandboxes
 
 Cold dev-agent launch spends ~2–4 minutes on npm (pnpm bootstrap, dependency
